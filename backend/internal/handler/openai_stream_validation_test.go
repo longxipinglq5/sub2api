@@ -124,6 +124,46 @@ func TestGatewayOpenAICompatibleHandlersAllowBooleanStreamToContinue(t *testing.
 	}
 }
 
+func TestGatewayOpenAICompatibleHandlersRejectHTTPContinuationPreviousResponseID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name string
+		path string
+		body string
+		run  func(*gin.Context)
+	}{
+		{
+			name: "gateway_responses_previous_response_id",
+			path: "/v1/responses",
+			body: `{"model":"gpt-5","stream":false,"previous_response_id":"resp_http_1","input":"hello"}`,
+			run: func(c *gin.Context) {
+				(&GatewayHandler{}).Responses(c)
+			},
+		},
+		{
+			name: "gateway_chat_completions_previous_response_id",
+			path: "/v1/chat/completions",
+			body: `{"model":"gpt-5","stream":false,"previous_response_id":"resp_http_1","messages":[{"role":"user","content":"hello"}]}`,
+			run: func(c *gin.Context) {
+				(&GatewayHandler{}).ChatCompletions(c)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, rec := newOpenAICompatibleStreamValidationContext(tt.path, tt.body, true)
+
+			tt.run(c)
+
+			require.Equal(t, http.StatusBadRequest, rec.Code)
+			require.Contains(t, rec.Body.String(), "previous_response_id")
+			require.Contains(t, rec.Body.String(), "Responses WebSocket v2")
+		})
+	}
+}
+
 func newOpenAICompatibleStreamValidationContext(path, body string, claudeCodeOnly bool) (*gin.Context, *httptest.ResponseRecorder) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

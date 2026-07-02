@@ -112,6 +112,7 @@ func (h *AuthHandler) respondWithTokenPair(c *gin.Context, user *service.User) {
 			response.InternalError(c, "Failed to generate token")
 			return
 		}
+		middleware2.SetBillingSessionCookie(c, token, h.authService.GetAccessTokenExpiresIn())
 		response.Success(c, AuthResponse{
 			AccessToken: token,
 			TokenType:   "Bearer",
@@ -119,6 +120,7 @@ func (h *AuthHandler) respondWithTokenPair(c *gin.Context, user *service.User) {
 		})
 		return
 	}
+	middleware2.SetBillingSessionCookie(c, tokenPair.AccessToken, tokenPair.ExpiresIn)
 	response.Success(c, AuthResponse{
 		AccessToken:  tokenPair.AccessToken,
 		RefreshToken: tokenPair.RefreshToken,
@@ -680,6 +682,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
+	middleware2.SetBillingSessionCookie(c, result.AccessToken, result.ExpiresIn)
 	response.Success(c, RefreshTokenResponse{
 		AccessToken:  result.AccessToken,
 		RefreshToken: result.RefreshToken,
@@ -714,6 +717,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	}
 	h.consumePendingOAuthSessionOnLogout(c)
 	clearOAuthLogoutCookies(c)
+	middleware2.ClearBillingSessionCookie(c)
 
 	response.Success(c, LogoutResponse{
 		Message: "Logged out successfully",

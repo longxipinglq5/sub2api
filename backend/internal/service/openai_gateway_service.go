@@ -1242,6 +1242,9 @@ func (s *OpenAIGatewayService) GenerateExplicitSessionHash(c *gin.Context, body 
 }
 
 // GenerateSessionHash generates a sticky-session hash for OpenAI requests.
+// It is routing metadata only: the relay never stores transcripts or raw
+// request bodies for context replay. Automatic failover may therefore only
+// replay the current request body that the client already supplied.
 //
 // Priority:
 //  1. Header: session_id

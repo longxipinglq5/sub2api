@@ -121,6 +121,16 @@
                   {{ t('nav.profile') }}
                 </router-link>
 
+                <router-link
+                  v-if="authStore.isAdmin"
+                  to="/admin/dashboard"
+                  @click="closeDropdown"
+                  class="dropdown-item"
+                >
+                  <Icon name="grid" size="sm" />
+                  {{ t('nav.adminDashboard') }}
+                </router-link>
+
                 <router-link to="/keys" @click="closeDropdown" class="dropdown-item">
                   <Icon name="key" size="sm" />
                   {{ t('nav.apiKeys') }}

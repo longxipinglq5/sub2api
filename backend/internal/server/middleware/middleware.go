@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/googleapi"
@@ -76,8 +77,38 @@ func NewErrorResponse(code, message string) ErrorResponse {
 
 // AbortWithError 中断请求并返回JSON错误
 func AbortWithError(c *gin.Context, statusCode int, code, message string) {
+	if strings.HasPrefix(c.Request.URL.Path, "/api/billing") {
+		c.JSON(statusCode, gin.H{
+			"code":       billingMiddlewareErrorCode(statusCode, code),
+			"message":    message,
+			"request_id": billingMiddlewareRequestID(c),
+		})
+		c.Abort()
+		return
+	}
 	c.JSON(statusCode, NewErrorResponse(code, message))
 	c.Abort()
+}
+
+func billingMiddlewareErrorCode(statusCode int, code string) string {
+	switch statusCode {
+	case http.StatusUnauthorized:
+		return "UNAUTHENTICATED"
+	case http.StatusForbidden:
+		return "PERMISSION_DENIED"
+	default:
+		return code
+	}
+}
+
+func billingMiddlewareRequestID(c *gin.Context) string {
+	if id := strings.TrimSpace(c.GetHeader("X-Request-ID")); id != "" {
+		return id
+	}
+	if id := strings.TrimSpace(c.Writer.Header().Get("X-Request-Id")); id != "" {
+		return id
+	}
+	return "req_unknown"
 }
 
 // ──────────────────────────────────────────────────────────

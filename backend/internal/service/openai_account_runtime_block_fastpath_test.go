@@ -105,6 +105,42 @@ func TestOpenAIRuntimeBlock_ClearAccountSchedulingBlock(t *testing.T) {
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
+func TestOpenAIRetryableFailover_TemporarilyBlocksAccountBeforeSwitch(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 48, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	svc.TempBlockRetryableFailoverAccount(context.Background(), account, &UpstreamFailoverError{
+		StatusCode:             http.StatusBadGateway,
+		RetryableOnSameAccount: true,
+	})
+
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestOpenAIRetryableFailover_DoesNotBlockNonRetryableError(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 49, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	svc.TempBlockRetryableFailoverAccount(context.Background(), account, &UpstreamFailoverError{
+		StatusCode:             http.StatusUnauthorized,
+		RetryableOnSameAccount: false,
+	})
+
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestOpenAICommittedStreamFailover_TemporarilyBlocksRetryableAccount(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 50, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	svc.RecordOpenAICommittedFailoverError(context.Background(), account, &UpstreamFailoverError{
+		StatusCode:             http.StatusBadGateway,
+		RetryableOnSameAccount: true,
+	})
+
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
 func TestShouldStopOpenAIOAuth429Failover_OnlyDuringStorm(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	account := &Account{ID: 42, Platform: PlatformOpenAI, Type: AccountTypeOAuth}

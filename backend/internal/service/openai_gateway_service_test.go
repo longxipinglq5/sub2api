@@ -235,6 +235,23 @@ func TestOpenAIGatewayService_GenerateSessionHash_UsesXXHash64(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
+func TestOpenAIGatewayService_GenerateSessionHash_StoresOnlyRoutingMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set("session_id", "tenant-session-secret")
+	body := []byte(`{"model":"gpt-5.5","input":[{"role":"user","content":"do not persist this transcript"}]}`)
+
+	svc := &OpenAIGatewayService{}
+	hash := svc.GenerateSessionHash(c, body)
+
+	require.NotEmpty(t, hash)
+	require.NotContains(t, hash, "tenant-session-secret")
+	require.NotContains(t, hash, "do not persist this transcript")
+	require.Len(t, hash, 16, "sticky routing stores a fixed-size hash, not conversation content")
+}
+
 func TestOpenAIGatewayService_GenerateSessionHash_AttachesLegacyHashToContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

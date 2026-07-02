@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
@@ -81,6 +82,15 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	}
 
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
+	if previousResponseID := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String()); previousResponseID != "" {
+		reqLog.Warn("openai_chat_completions.request_validation_failed",
+			zap.String("reason", "previous_response_id_requires_wsv2"),
+			zap.String("previous_response_id_kind", service.ClassifyOpenAIPreviousResponseIDKind(previousResponseID)),
+			zap.Int("previous_response_id_len", len(previousResponseID)),
+		)
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "previous_response_id is only supported on Responses WebSocket v2")
+		return
+	}
 
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
@@ -230,6 +240,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
 					if c.Writer.Size() != writerSizeBeforeForward {
+						h.gatewayService.RecordOpenAICommittedFailoverError(c.Request.Context(), account, failoverErr)
 						h.handleFailoverExhausted(c, failoverErr, true)
 						return
 					}
@@ -254,6 +265,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 						}
 					}
 					h.gatewayService.RecordOpenAIAccountSwitch()
+					h.gatewayService.TempBlockRetryableFailoverAccount(c.Request.Context(), account, failoverErr)
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {

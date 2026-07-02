@@ -126,6 +126,29 @@ func (s *OpenAIGatewayService) ClearAccountSchedulingBlock(accountID int64) {
 	s.openaiAccountRuntimeBlockUntil.Delete(accountID)
 }
 
+// TempBlockRetryableFailoverAccount opens the runtime circuit for an OpenAI
+// account after a retryable upstream failure has exhausted same-account retry.
+// This stores only account health metadata; no request body or conversation
+// context is retained.
+func (s *OpenAIGatewayService) TempBlockRetryableFailoverAccount(_ context.Context, account *Account, failoverErr *UpstreamFailoverError) {
+	if s == nil || account == nil || failoverErr == nil || !failoverErr.RetryableOnSameAccount {
+		return
+	}
+	s.BlockAccountScheduling(account, time.Time{}, "retryable_failover")
+}
+
+// RecordOpenAICommittedFailoverError records account health after a stream has
+// already been committed to the downstream client. The request cannot be
+// replayed or switched safely at that point, so this updates only scheduling
+// metadata for future requests.
+func (s *OpenAIGatewayService) RecordOpenAICommittedFailoverError(ctx context.Context, account *Account, failoverErr *UpstreamFailoverError) {
+	if s == nil || account == nil || failoverErr == nil {
+		return
+	}
+	s.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+	s.TempBlockRetryableFailoverAccount(ctx, account, failoverErr)
+}
+
 func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) bool {
 	if s == nil || !isOpenAIAccount(account) {
 		return false

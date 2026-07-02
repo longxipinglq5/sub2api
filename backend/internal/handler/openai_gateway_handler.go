@@ -435,6 +435,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
 					if c.Writer.Size() != writerSizeBeforeForward {
+						h.gatewayService.RecordOpenAICommittedFailoverError(c.Request.Context(), account, failoverErr)
 						h.handleFailoverExhausted(c, failoverErr, true)
 						return
 					}
@@ -459,6 +460,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						}
 					}
 					h.gatewayService.RecordOpenAIAccountSwitch()
+					h.gatewayService.TempBlockRetryableFailoverAccount(c.Request.Context(), account, failoverErr)
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {
@@ -857,6 +859,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
 					if c.Writer.Size() != writerSizeBeforeForward {
+						h.gatewayService.RecordOpenAICommittedFailoverError(c.Request.Context(), account, failoverErr)
 						h.handleAnthropicFailoverExhausted(c, failoverErr, true)
 						return
 					}
@@ -881,6 +884,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						}
 					}
 					h.gatewayService.RecordOpenAIAccountSwitch()
+					h.gatewayService.TempBlockRetryableFailoverAccount(c.Request.Context(), account, failoverErr)
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {

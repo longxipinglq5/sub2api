@@ -245,7 +245,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	if clientStream {
 		return s.streamRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, len(body))
 	}
-	return s.bufferRawChatCompletions(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+	return s.bufferRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 }
 
 func (s *OpenAIGatewayService) rawChatCompletionsURL(account *Account) (string, error) {
@@ -466,6 +466,7 @@ func extractCCStreamUsage(payload string) *OpenAIUsage {
 func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	c *gin.Context,
 	resp *http.Response,
+	account *Account,
 	originalModel string,
 	billingModel string,
 	upstreamModel string,
@@ -485,13 +486,18 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 
 	var ccResp apicompat.ChatCompletionsResponse
 	var usage OpenAIUsage
-	if err := json.Unmarshal(respBody, &ccResp); err == nil && ccResp.Usage != nil {
-		usage = OpenAIUsage{
-			InputTokens:  ccResp.Usage.PromptTokens,
-			OutputTokens: ccResp.Usage.CompletionTokens,
+	if err := json.Unmarshal(respBody, &ccResp); err == nil {
+		if isRawChatNonStreamingEmptyAssistantCompletion(ccResp) {
+			return nil, newOpenAISilentRefusalFailoverError(c, account, requestID)
 		}
-		if ccResp.Usage.PromptTokensDetails != nil {
-			usage.CacheReadInputTokens = ccResp.Usage.PromptTokensDetails.CachedTokens
+		if ccResp.Usage != nil {
+			usage = OpenAIUsage{
+				InputTokens:  ccResp.Usage.PromptTokens,
+				OutputTokens: ccResp.Usage.CompletionTokens,
+			}
+			if ccResp.Usage.PromptTokensDetails != nil {
+				usage.CacheReadInputTokens = ccResp.Usage.PromptTokensDetails.CachedTokens
+			}
 		}
 	}
 
@@ -517,6 +523,62 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		Stream:          false,
 		Duration:        time.Since(startTime),
 	}, nil
+}
+
+func isRawChatNonStreamingEmptyAssistantCompletion(resp apicompat.ChatCompletionsResponse) bool {
+	if len(resp.Choices) == 0 {
+		return true
+	}
+	for _, choice := range resp.Choices {
+		if !isRawChatChoiceEmptyAssistantCompletion(choice) {
+			return false
+		}
+	}
+	return true
+}
+
+func isRawChatChoiceEmptyAssistantCompletion(choice apicompat.ChatChoice) bool {
+	if !strings.EqualFold(strings.TrimSpace(choice.FinishReason), "stop") {
+		return false
+	}
+	msg := choice.Message
+	if len(msg.ToolCalls) > 0 || msg.FunctionCall != nil {
+		return false
+	}
+	if strings.TrimSpace(msg.ReasoningContent) != "" {
+		return false
+	}
+	return rawChatMessageContentIsBlank(msg.Content)
+}
+
+func rawChatMessageContentIsBlank(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return true
+	}
+	var text string
+	if err := json.Unmarshal(trimmed, &text); err == nil {
+		return strings.TrimSpace(text) == ""
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(trimmed, &parts); err == nil {
+		if len(parts) == 0 {
+			return true
+		}
+		for _, part := range parts {
+			if strings.EqualFold(strings.TrimSpace(part.Type), "text") && strings.TrimSpace(part.Text) != "" {
+				return false
+			}
+			if !strings.EqualFold(strings.TrimSpace(part.Type), "text") {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // buildOpenAIChatCompletionsURL 拼接上游 Chat Completions 端点 URL。
