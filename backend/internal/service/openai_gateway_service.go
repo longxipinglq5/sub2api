@@ -2456,8 +2456,17 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImagesPlatform(
 	excludedIDs map[int64]struct{},
 	requiredCapability OpenAIImagesCapability,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	requestedIsWanx := isWanxImageGenerationModel(requestedModel)
 	if strings.TrimSpace(platform) == PlatformQwen {
+		if !requestedIsWanx {
+			return nil, OpenAIAccountScheduleDecision{Layer: openAIAccountScheduleLayerLoadBalance},
+				fmt.Errorf("%w supporting model: %s (qwen images require Wanx image models)", ErrNoAvailableAccounts, requestedModel)
+		}
 		return s.selectAccountWithSchedulerForQwenImages(ctx, groupID, sessionHash, requestedModel, excludedIDs, requiredCapability)
+	}
+	if requestedIsWanx {
+		return nil, OpenAIAccountScheduleDecision{Layer: openAIAccountScheduleLayerLoadBalance},
+			fmt.Errorf("%w supporting model: %s (Wanx image models require qwen platform)", ErrNoAvailableAccounts, requestedModel)
 	}
 
 	normalizedPlatform := normalizeOpenAICompatiblePlatform(platform)
@@ -2638,6 +2647,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessForQwenImages(
 
 func qwenImageAccountEligible(ctx context.Context, account *Account, requestedModel string, requiredCapability OpenAIImagesCapability) bool {
 	if account == nil || account.Platform != PlatformQwen || account.Type != AccountTypeAPIKey {
+		return false
+	}
+	if !isWanxImageGenerationModel(requestedModel) {
 		return false
 	}
 	if !account.IsSchedulableForModelWithContext(ctx, requestedModel) {

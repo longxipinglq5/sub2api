@@ -120,6 +120,43 @@ func TestParseOpenAIImagesRequest_RejectsWanxB64JSON(t *testing.T) {
 	require.ErrorContains(t, err, "b64_json response_format is not supported")
 }
 
+func TestParseOpenAIImagesRequest_RejectsWanxNonURLResponseFormat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"wan2.6-t2i","prompt":"draw a cat","response_format":"json"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "response_format must be url")
+}
+
+func TestParseOpenAIImagesRequest_RejectsWanxMultipart(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "wan2.6-t2i"))
+	require.NoError(t, writer.WriteField("prompt", "draw a cat"))
+	require.NoError(t, writer.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body.Bytes()))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body.Bytes())
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "multipart is not supported")
+}
+
 func TestParseOpenAIImagesRequest_RejectsWanxEdits(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -143,6 +180,34 @@ func TestParseOpenAIImagesRequest_RejectsWanxEdits(t *testing.T) {
 	parsed, err := svc.ParseOpenAIImagesRequest(c, body.Bytes())
 	require.Nil(t, parsed)
 	require.ErrorContains(t, err, "Qwen Wanx images only support generations")
+}
+
+func TestOpenAIGatewayServiceForwardImages_QwenRejectsNonWanxModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	result, err := svc.ForwardImages(context.Background(), c, &Account{
+		ID:       1,
+		Platform: PlatformQwen,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "dashscope-key",
+		},
+	}, body, parsed, "")
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "requires a Wanx image model")
 }
 
 func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartEdit(t *testing.T) {

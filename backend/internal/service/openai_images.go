@@ -219,11 +219,17 @@ func (s *OpenAIGatewayService) ParseOpenAIImagesRequest(c *gin.Context, body []b
 	}
 
 	if isWanxImageGenerationModel(req.Model) {
+		if req.Multipart {
+			return nil, fmt.Errorf("multipart is not supported for Wanx image models")
+		}
 		if req.Stream {
 			return nil, fmt.Errorf("streaming is not supported for Wanx image models")
 		}
 		if req.ResponseFormat == "b64_json" {
 			return nil, fmt.Errorf("b64_json response_format is not supported for Wanx image models")
+		}
+		if req.ResponseFormat != "" && req.ResponseFormat != "url" {
+			return nil, fmt.Errorf("response_format must be url for Wanx image models")
 		}
 	}
 
@@ -573,7 +579,13 @@ func (s *OpenAIGatewayService) ForwardImages(
 		return nil, fmt.Errorf("parsed images request is required")
 	}
 	if account != nil && account.Platform == PlatformQwen {
+		if !isWanxImageGenerationModel(parsed.Model) {
+			return nil, fmt.Errorf("Qwen images requires a Wanx image model, got %q", parsed.Model)
+		}
 		return s.forwardQwenWanxImages(ctx, c, account, parsed)
+	}
+	if isWanxImageGenerationModel(parsed.Model) {
+		return nil, fmt.Errorf("Wanx image models require a Qwen account")
 	}
 	switch account.Type {
 	case AccountTypeAPIKey:
