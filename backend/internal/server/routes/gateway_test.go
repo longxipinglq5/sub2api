@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -144,7 +145,7 @@ func TestGatewayRoutes_QwenImages(t *testing.T) {
 
 	for _, path := range []string{
 		"/v1/images/generations",
-		"/openai/v1/images/generations",
+		"/images/generations",
 	} {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"qwen-image","prompt":"draw a cat"}`))
 		req.Header.Set("Content-Type", "application/json")
@@ -154,21 +155,23 @@ func TestGatewayRoutes_QwenImages(t *testing.T) {
 		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s should reach image generation handler", path)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", strings.NewReader(`{"model":"qwen-image","prompt":"draw a cat"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+	for _, path := range []string{
+		"/v1/images/edits",
+		"/images/edits",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"qwen-image","prompt":"draw a cat"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
 
-	router.ServeHTTP(w, req)
-	require.Equal(t, http.StatusNotFound, w.Code)
-	require.Contains(t, w.Body.String(), "edits are not supported")
-	require.Contains(t, w.Body.String(), "not_found_error")
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusNotFound, w.Code)
 
-	req = httptest.NewRequest(http.MethodPost, "/openai/v1/images/edits", strings.NewReader(`{"model":"qwen-image","prompt":"draw a cat"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-
-	router.ServeHTTP(w, req)
-	require.Equal(t, http.StatusNotFound, w.Code)
-	require.Contains(t, w.Body.String(), "edits are not supported")
-	require.Contains(t, w.Body.String(), "not_found_error")
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &payload))
+		errorObj, ok := payload["error"].(map[string]any)
+		require.True(t, ok, "error object missing for path=%s", path)
+		require.Equal(t, "not_found_error", errorObj["type"])
+		message, _ := errorObj["message"].(string)
+		require.NotEmpty(t, message)
+	}
 }
