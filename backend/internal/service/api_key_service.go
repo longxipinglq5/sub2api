@@ -319,8 +319,23 @@ func (s *APIKeyService) incrementAPIKeyErrorCount(ctx context.Context, userID in
 // 对于订阅类型分组：检查用户是否有有效订阅
 // 对于标准类型分组：使用原有的 AllowedGroups 和 IsExclusive 逻辑
 func (s *APIKeyService) canUserBindGroup(ctx context.Context, user *User, group *Group) bool {
-	// 订阅类型分组：需要有效订阅
+	if user == nil || group == nil {
+		return false
+	}
+	// 混合模式：优先使用有效订阅；没有订阅时允许走账户余额兜底。
+	if group.IsHybridSubscriptionType() {
+		if s.userSubRepo != nil {
+			if _, err := s.userSubRepo.GetActiveByUserIDAndGroupID(ctx, user.ID, group.ID); err == nil {
+				return true
+			}
+		}
+		return user.Balance > 0
+	}
+	// 纯订阅类型分组：需要有效订阅。
 	if group.IsSubscriptionType() {
+		if s.userSubRepo == nil {
+			return false
+		}
 		_, err := s.userSubRepo.GetActiveByUserIDAndGroupID(ctx, user.ID, group.ID)
 		return err == nil // 有有效订阅则允许
 	}

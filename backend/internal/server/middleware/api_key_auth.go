@@ -158,8 +158,16 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			)
 			if subErr != nil {
 				if !skipBilling {
-					AbortWithError(c, 403, "SUBSCRIPTION_NOT_FOUND", "No active subscription found for this group")
-					return
+					if apiKey.Group.AllowsSubscriptionBalanceFallback() {
+						if apiKey.User.Balance <= 0 {
+							AbortWithError(c, 403, "INSUFFICIENT_BALANCE", "Insufficient account balance")
+							return
+						}
+						markHybridBalanceFallback(c)
+					} else {
+						AbortWithError(c, 403, "SUBSCRIPTION_NOT_FOUND", "No active subscription found for this group")
+						return
+					}
 				}
 				// skipBilling: 订阅不存在也放行，handler 会返回可用的数据
 			} else {

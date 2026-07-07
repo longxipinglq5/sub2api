@@ -234,6 +234,44 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, w.Code)
 	})
+
+	t.Run("hybrid_mode_missing_subscription_uses_balance_fallback", func(t *testing.T) {
+		cfg := &config.Config{RunMode: config.RunModeStandard}
+		hybridGroup := *group
+		hybridGroup.SubscriptionType = service.SubscriptionTypeHybrid
+		hybridKey := *apiKey
+		hybridKey.Group = &hybridGroup
+		hybridKey.GroupID = &hybridGroup.ID
+		apiKeyService := service.NewAPIKeyService(&stubApiKeyRepo{
+			getByKey: func(ctx context.Context, key string) (*service.APIKey, error) {
+				if key != hybridKey.Key {
+					return nil, service.ErrAPIKeyNotFound
+				}
+				clone := hybridKey
+				return &clone, nil
+			},
+		}, nil, nil, nil, nil, nil, cfg)
+		subscriptionRepo := &stubUserSubscriptionRepo{
+			getActive: func(ctx context.Context, userID, groupID int64) (*service.UserSubscription, error) {
+				return nil, service.ErrSubscriptionNotFound
+			},
+		}
+		subscriptionService := service.NewSubscriptionService(nil, subscriptionRepo, nil, nil, cfg)
+		router := gin.New()
+		router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, cfg)))
+		router.GET("/t", func(c *gin.Context) {
+			fallback, _ := c.Request.Context().Value(ctxkey.HybridBalanceFallback).(bool)
+			require.True(t, fallback)
+			c.JSON(http.StatusOK, gin.H{"ok": true})
+		})
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/t", nil)
+		req.Header.Set("x-api-key", hybridKey.Key)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+	})
 }
 
 func TestAPIKeyAuthSetsGroupContext(t *testing.T) {
