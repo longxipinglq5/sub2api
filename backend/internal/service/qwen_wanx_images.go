@@ -44,6 +44,8 @@ type dashScopeImageTaskResponse struct {
 	Output    struct {
 		TaskID     string `json:"task_id"`
 		TaskStatus string `json:"task_status"`
+		Code       string `json:"code"`
+		Message    string `json:"message"`
 		Results    []struct {
 			URL string `json:"url"`
 		} `json:"results"`
@@ -121,14 +123,19 @@ func (s *OpenAIGatewayService) forwardQwenWanxImages(
 		return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, ResponseBody: respBody}
 	}
 
-	deadline := time.Now().Add(pollTimeout)
+	timeout := time.NewTimer(pollTimeout)
+	defer stopAndDrainTimer(timeout)
 	var finalTask dashScopeImageTaskResponse
 	for {
-		if time.Now().After(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timeout.C:
 			return nil, &UpstreamFailoverError{
 				StatusCode:   http.StatusBadGateway,
 				ResponseBody: []byte(`{"message":"DashScope task poll timeout"}`),
 			}
+		default:
 		}
 
 		pollResp, pollBody, err := dashScopeDoJSON(ctx, http.MethodGet, buildDashScopeURL(baseURL, dashScopeTaskStatusPathPrefix+taskID), apiKey, nil)
@@ -184,15 +191,21 @@ func (s *OpenAIGatewayService) forwardQwenWanxImages(
 			ApplyOpenAIImageBillingResolution(result)
 			return result, nil
 		case "FAILED":
-			return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, ResponseBody: pollBody}
+			return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, ResponseBody: dashScopeTaskFailureBody(pollBody, finalTask)}
 		}
 
-		timer := time.NewTimer(pollInterval)
+		interval := time.NewTimer(pollInterval)
 		select {
 		case <-ctx.Done():
-			timer.Stop()
+			stopAndDrainTimer(interval)
 			return nil, ctx.Err()
-		case <-timer.C:
+		case <-timeout.C:
+			stopAndDrainTimer(interval)
+			return nil, &UpstreamFailoverError{
+				StatusCode:   http.StatusBadGateway,
+				ResponseBody: []byte(`{"message":"DashScope task poll timeout"}`),
+			}
+		case <-interval.C:
 		}
 	}
 }
@@ -252,9 +265,12 @@ func dashScopeDoJSON(ctx context.Context, method string, targetURL string, apiKe
 		return nil, nil, err
 	}
 	body, err := io.ReadAll(resp.Body)
+	closeErr := resp.Body.Close()
 	if err != nil {
-		_ = resp.Body.Close()
 		return nil, nil, err
+	}
+	if closeErr != nil {
+		return nil, nil, closeErr
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	return resp, body, nil
@@ -267,4 +283,44 @@ func firstNonEmptyTrimmed(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func dashScopeTaskFailureBody(body []byte, task dashScopeImageTaskResponse) []byte {
+	if len(body) > 0 {
+		return body
+	}
+	failure := map[string]any{
+		"output": map[string]any{
+			"task_status": task.Output.TaskStatus,
+		},
+	}
+	if trimmed := strings.TrimSpace(task.Output.Code); trimmed != "" {
+		failure["output"].(map[string]any)["code"] = trimmed
+	}
+	if trimmed := strings.TrimSpace(task.Output.Message); trimmed != "" {
+		failure["output"].(map[string]any)["message"] = trimmed
+	}
+	if trimmed := strings.TrimSpace(task.Code); trimmed != "" {
+		failure["code"] = trimmed
+	}
+	if trimmed := strings.TrimSpace(task.Message); trimmed != "" {
+		failure["message"] = trimmed
+	}
+	encoded, err := json.Marshal(failure)
+	if err != nil {
+		return []byte(`{"message":"DashScope task failed"}`)
+	}
+	return encoded
+}
+
+func stopAndDrainTimer(timer *time.Timer) {
+	if timer == nil {
+		return
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
 }

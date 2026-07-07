@@ -67,7 +67,7 @@ func TestForwardQwenWanxImages_SuccessURLCase(t *testing.T) {
 	account := &Account{
 		ID:       7,
 		Type:     AccountTypeAPIKey,
-		Platform: PlatformOpenAI,
+		Platform: PlatformQwen,
 		Credentials: map[string]any{
 			"api_key":          "dashscope-key",
 			"base_url":         server.URL,
@@ -170,4 +170,101 @@ func TestForwardQwenWanxImages_TaskFailedReturnsFailover(t *testing.T) {
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.Contains(t, string(failoverErr.ResponseBody), `"task_status":"FAILED"`)
+}
+
+func TestForwardQwenWanxImages_TimeoutDoesNotWaitFullInterval(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/services/aigc/text2image/image-synthesis":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"request_id":"req-submit","output":{"task_id":"task-running","task_status":"PENDING"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/tasks/task-running":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"request_id":"req-poll-running","output":{"task_id":"task-running","task_status":"RUNNING"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body := []byte(`{"model":"wanx2.1-t2i-turbo","prompt":"draw a cat"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	account := &Account{
+		Credentials: map[string]any{
+			"api_key":          "dashscope-key",
+			"base_url":         server.URL,
+			"poll_interval_ms": 200,
+			"poll_timeout_ms":  20,
+		},
+	}
+
+	start := time.Now()
+	result, err := svc.forwardQwenWanxImages(context.Background(), c, account, parsed)
+	elapsed := time.Since(start)
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.Less(t, elapsed, 150*time.Millisecond)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+}
+
+func TestForwardQwenWanxImages_TaskFailedWithOutputCodeMessageReturnsFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/services/aigc/text2image/image-synthesis":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"request_id":"req-submit","output":{"task_id":"task-err","task_status":"PENDING"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/tasks/task-err":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"request_id":"req-poll-failed","output":{"task_id":"task-err","task_status":"FAILED","code":"InvalidParameter","message":"bad prompt"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body := []byte(`{"model":"wanx2.1-t2i-turbo","prompt":"draw a cat"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	account := &Account{
+		Credentials: map[string]any{
+			"api_key":          "dashscope-key",
+			"base_url":         server.URL,
+			"poll_interval_ms": 1,
+			"poll_timeout_ms":  2000,
+		},
+	}
+
+	result, err := svc.forwardQwenWanxImages(context.Background(), c, account, parsed)
+	require.Nil(t, result)
+	require.Error(t, err)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Contains(t, string(failoverErr.ResponseBody), `InvalidParameter`)
+	require.Contains(t, string(failoverErr.ResponseBody), `bad prompt`)
 }
