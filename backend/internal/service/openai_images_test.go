@@ -120,6 +120,31 @@ func TestParseOpenAIImagesRequest_RejectsWanxB64JSON(t *testing.T) {
 	require.ErrorContains(t, err, "b64_json response_format is not supported")
 }
 
+func TestParseOpenAIImagesRequest_RejectsWanxEdits(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "wan2.6-t2i"))
+	require.NoError(t, writer.WriteField("prompt", "replace background"))
+	part, err := writer.CreateFormFile("image", "source.png")
+	require.NoError(t, err)
+	_, err = part.Write([]byte("fake-image-bytes"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(body.Bytes()))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body.Bytes())
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "Qwen Wanx images only support generations")
+}
+
 func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartEdit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -214,6 +214,10 @@ func (s *OpenAIGatewayService) ParseOpenAIImagesRequest(c *gin.Context, body []b
 		}
 	}
 
+	if isWanxImageGenerationModel(req.Model) && req.Endpoint != openAIImagesGenerationsEndpoint {
+		return nil, fmt.Errorf("Qwen Wanx images only support generations")
+	}
+
 	if isWanxImageGenerationModel(req.Model) {
 		if req.Stream {
 			return nil, fmt.Errorf("streaming is not supported for Wanx image models")
