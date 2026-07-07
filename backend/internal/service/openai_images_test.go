@@ -58,6 +58,158 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_JSON(t *testing.T) {
 	require.False(t, parsed.Multipart)
 }
 
+func TestParseOpenAIImagesRequest_AllowsWanxTextToImageModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	models := []string{
+		"wan2.6-t2i",
+		"wan2.5-t2i-preview",
+		"wan2.2-t2i-flash",
+		"wanx2.1-t2i-turbo",
+		"wanx2.1-t2i-plus",
+	}
+
+	svc := &OpenAIGatewayService{}
+	for _, model := range models {
+		t.Run(model, func(t *testing.T) {
+			body := []byte(`{"model":"` + model + `","prompt":"draw a cat"}`)
+
+			req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = req
+
+			parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+			require.NoError(t, err)
+			require.NotNil(t, parsed)
+			require.Equal(t, model, parsed.Model)
+		})
+	}
+}
+
+func TestParseOpenAIImagesRequest_RejectsWanxStreaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"wan2.6-t2i","prompt":"draw a cat","stream":true}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "streaming is not supported")
+}
+
+func TestParseOpenAIImagesRequest_RejectsWanxB64JSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"wan2.6-t2i","prompt":"draw a cat","response_format":"b64_json"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "b64_json response_format is not supported")
+}
+
+func TestParseOpenAIImagesRequest_RejectsWanxNonURLResponseFormat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"wan2.6-t2i","prompt":"draw a cat","response_format":"json"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "response_format must be url")
+}
+
+func TestParseOpenAIImagesRequest_RejectsWanxMultipart(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "wan2.6-t2i"))
+	require.NoError(t, writer.WriteField("prompt", "draw a cat"))
+	require.NoError(t, writer.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body.Bytes()))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body.Bytes())
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "multipart is not supported")
+}
+
+func TestParseOpenAIImagesRequest_RejectsWanxEdits(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "wan2.6-t2i"))
+	require.NoError(t, writer.WriteField("prompt", "replace background"))
+	part, err := writer.CreateFormFile("image", "source.png")
+	require.NoError(t, err)
+	_, err = part.Write([]byte("fake-image-bytes"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(body.Bytes()))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body.Bytes())
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "Qwen Wanx images only support generations")
+}
+
+func TestOpenAIGatewayServiceForwardImages_QwenRejectsNonWanxModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	result, err := svc.ForwardImages(context.Background(), c, &Account{
+		ID:       1,
+		Platform: PlatformQwen,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "dashscope-key",
+		},
+	}, body, parsed, "")
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "requires a Wanx image model")
+}
+
 func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartEdit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -664,6 +816,82 @@ func TestOpenAIGatewayServiceForwardImages_OAuthPassesNAndReturnsAllImages(t *te
 	require.Equal(t, "aW1hZ2UtMw==", gjson.Get(rec.Body.String(), "data.2.b64_json").String())
 	require.Equal(t, "draw a cat 1", gjson.Get(rec.Body.String(), "data.0.revised_prompt").String())
 	require.Equal(t, "draw a cat 3", gjson.Get(rec.Body.String(), "data.2.revised_prompt").String())
+}
+
+func TestOpenAIGatewayServiceForwardImages_QwenDispatchesToWanxAdapter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var submitCount int
+	var pollCount int
+	dashScopeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/services/aigc/text2image/image-synthesis":
+			submitCount++
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+			require.Equal(t, "Bearer dashscope-key", r.Header.Get("Authorization"))
+			require.Equal(t, "enable", r.Header.Get("X-DashScope-Async"))
+			require.Equal(t, "wanx2.1-t2i-plus", gjson.GetBytes(body, "model").String())
+			require.Equal(t, "draw a skyline", gjson.GetBytes(body, "input.prompt").String())
+			require.Equal(t, "1024x1024", gjson.GetBytes(body, "parameters.size").String())
+			require.Equal(t, int64(2), gjson.GetBytes(body, "parameters.n").Int())
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"request_id":"req-submit","output":{"task_id":"task-123","task_status":"PENDING"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/tasks/task-123":
+			pollCount++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"request_id":"req-poll","output":{"task_id":"task-123","task_status":"SUCCEEDED","results":[{"url":"https://img.example/1.png"},{"url":"https://img.example/2.png"}]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer dashScopeServer.Close()
+
+	body := []byte(`{"model":"wanx2.1-t2i-plus","prompt":"draw a skyline","n":2,"size":"1024x1024"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{
+		httpUpstream: &httpUpstreamRecorder{
+			resp: &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"wrong upstream"}}`)),
+			},
+		},
+	}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	account := &Account{
+		ID:       7,
+		Name:     "qwen-wanx",
+		Type:     AccountTypeAPIKey,
+		Platform: PlatformQwen,
+		Credentials: map[string]any{
+			"api_key":          "dashscope-key",
+			"base_url":         dashScopeServer.URL,
+			"poll_interval_ms": 1,
+			"poll_timeout_ms":  2000,
+		},
+	}
+
+	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 1, submitCount)
+	require.Equal(t, 1, pollCount)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "https://img.example/1.png", gjson.Get(rec.Body.String(), "data.0.url").String())
+	require.Equal(t, "https://img.example/2.png", gjson.Get(rec.Body.String(), "data.1.url").String())
+	require.Equal(t, "req-poll", result.RequestID)
+	require.Equal(t, "wanx2.1-t2i-plus", result.Model)
+	require.Equal(t, "wanx2.1-t2i-plus", result.BillingModel)
+	require.Equal(t, "wanx2.1-t2i-plus", result.UpstreamModel)
+	require.Equal(t, 2, result.ImageCount)
 }
 
 func TestOpenAIGatewayServiceForwardImages_OAuthUpstreamHTTPErrorSurfacesRealError(t *testing.T) {

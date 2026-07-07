@@ -1063,6 +1063,134 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_SkipsFreshlyRa
 	require.Equal(t, int64(32002), account.ID)
 }
 
+func TestOpenAIGatewayService_SelectAccountWithSchedulerForImagesPlatform_QwenImagesSelectsQwenAccount(t *testing.T) {
+	ctx := context.Background()
+	openAIAccount := Account{
+		ID:          36001,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+	}
+	qwenAccount := Account{
+		ID:          36002,
+		Platform:    PlatformQwen,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{openAIAccount, qwenAccount}},
+		cfg:         &config.Config{},
+	}
+
+	selection, _, err := svc.SelectAccountWithSchedulerForImagesPlatform(
+		ctx,
+		nil,
+		PlatformQwen,
+		"",
+		"wan2.6-t2i",
+		nil,
+		OpenAIImagesCapabilityNative,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(36002), selection.Account.ID)
+	require.Equal(t, PlatformQwen, selection.Account.Platform)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithSchedulerForImagesPlatform_QwenImagesDoNotFallbackToOpenAI(t *testing.T) {
+	ctx := context.Background()
+	openAIAccount := Account{
+		ID:          36101,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{openAIAccount}},
+		cfg:         &config.Config{},
+	}
+
+	selection, _, err := svc.SelectAccountWithSchedulerForImagesPlatform(
+		ctx,
+		nil,
+		PlatformQwen,
+		"",
+		"wan2.6-t2i",
+		nil,
+		OpenAIImagesCapabilityNative,
+	)
+	require.Error(t, err)
+	require.Nil(t, selection)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithSchedulerForImagesPlatform_OpenAIDoesNotAcceptWanx(t *testing.T) {
+	ctx := context.Background()
+	openAIAccount := Account{
+		ID:          36201,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{openAIAccount}},
+		cfg:         &config.Config{},
+	}
+
+	selection, _, err := svc.SelectAccountWithSchedulerForImagesPlatform(
+		ctx,
+		nil,
+		PlatformOpenAI,
+		"",
+		"wan2.6-t2i",
+		nil,
+		OpenAIImagesCapabilityNative,
+	)
+	require.Error(t, err)
+	require.Nil(t, selection)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithSchedulerForImagesPlatform_QwenDoesNotAcceptOpenAIImageModel(t *testing.T) {
+	ctx := context.Background()
+	qwenAccount := Account{
+		ID:          36301,
+		Platform:    PlatformQwen,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{qwenAccount}},
+		cfg:         &config.Config{},
+	}
+
+	selection, _, err := svc.SelectAccountWithSchedulerForImagesPlatform(
+		ctx,
+		nil,
+		PlatformQwen,
+		"",
+		"gpt-image-2",
+		nil,
+		OpenAIImagesCapabilityNative,
+	)
+	require.Error(t, err)
+	require.Nil(t, selection)
+}
+
 func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_ModelRateLimitOnlySkipsThatModel(t *testing.T) {
 	ctx := context.Background()
 	resetAt := time.Now().Add(30 * time.Minute).Format(time.RFC3339)

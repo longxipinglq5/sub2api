@@ -160,6 +160,19 @@
             <PlatformIcon platform="grok" size="sm" />
             Grok
           </button>
+          <button
+            type="button"
+            @click="form.platform = 'qwen'"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'qwen'
+                ? 'bg-white text-cyan-700 shadow-sm dark:bg-dark-600 dark:text-cyan-300'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="qwen" size="sm" />
+            Qwen
+          </button>
         </div>
       </div>
 
@@ -3438,6 +3451,14 @@ const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
 
+const getDefaultApiKeyBaseUrl = (platform: AccountPlatform) => {
+  if (platform === 'openai') return 'https://api.openai.com'
+  if (platform === 'gemini') return 'https://generativelanguage.googleapis.com'
+  if (platform === 'grok') return 'https://api.x.ai/v1'
+  if (platform === 'qwen') return 'https://dashscope.aliyuncs.com/api/v1'
+  return 'https://api.anthropic.com'
+}
+
 const syncPreviewCredentials = computed(() => {
   if (!apiKeyValue.value) return undefined
   return {
@@ -3873,14 +3894,7 @@ watch(
   () => form.platform,
   (newPlatform) => {
     // Reset base URL based on platform
-    apiKeyBaseUrl.value =
-      (newPlatform === 'openai')
-        ? 'https://api.openai.com'
-        : newPlatform === 'gemini'
-          ? 'https://generativelanguage.googleapis.com'
-          : newPlatform === 'grok'
-            ? 'https://api.x.ai/v1'
-            : 'https://api.anthropic.com'
+    apiKeyBaseUrl.value = getDefaultApiKeyBaseUrl(newPlatform)
     // Clear model-related settings
     allowedModels.value = []
     modelMappings.value = []
@@ -3906,6 +3920,10 @@ watch(
       modelRestrictionMode.value = 'mapping'
       form.concurrency = 1
       form.load_factor = null
+    }
+    if (newPlatform === 'qwen') {
+      accountCategory.value = 'apikey'
+      allowedModels.value = [...getModelsByPlatform('qwen')]
     }
     if (newPlatform !== 'gemini' && newPlatform !== 'anthropic' && accountCategory.value === 'service_account') {
       accountCategory.value = 'oauth-based'
@@ -4706,12 +4724,7 @@ const handleSubmit = async () => {
   }
 
   // Determine default base URL based on platform
-  const defaultBaseUrl =
-    form.platform === 'openai'
-      ? 'https://api.openai.com'
-      : form.platform === 'gemini'
-        ? 'https://generativelanguage.googleapis.com'
-        : 'https://api.anthropic.com'
+  const defaultBaseUrl = getDefaultApiKeyBaseUrl(form.platform)
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
@@ -4871,6 +4884,17 @@ const createAccountAndFinish = async (
   if (platform === 'grok') {
     if (!credentials.base_url) {
       credentials.base_url = apiKeyBaseUrl.value.trim() || 'https://api.x.ai/v1'
+    }
+    const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+    if (modelMapping) {
+      credentials.model_mapping = modelMapping
+    } else {
+      delete credentials.model_mapping
+    }
+  }
+  if (platform === 'qwen') {
+    if (!credentials.base_url) {
+      credentials.base_url = apiKeyBaseUrl.value.trim() || 'https://dashscope.aliyuncs.com/api/v1'
     }
     const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
     if (modelMapping) {

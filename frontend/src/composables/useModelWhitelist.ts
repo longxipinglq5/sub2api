@@ -99,7 +99,12 @@ const qwenModels = [
   'qwen2.5-7b-instruct', 'qwen2.5-3b-instruct', 'qwen2.5-1.5b-instruct',
   'qwen2.5-coder-32b-instruct', 'qwen2.5-coder-14b-instruct', 'qwen2.5-coder-7b-instruct',
   'qwen3-235b-a22b',
-  'qwq-32b', 'qwq-32b-preview'
+  'qwq-32b', 'qwq-32b-preview',
+  'wan2.6-t2i',
+  'wan2.5-t2i-preview',
+  'wan2.2-t2i-flash',
+  'wanx2.1-t2i-turbo',
+  'wanx2.1-t2i-plus'
 ]
 
 // DeepSeek

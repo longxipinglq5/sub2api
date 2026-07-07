@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -137,4 +138,40 @@ func TestGatewayRoutesOpenAICountTokensPathIsRegistered(t *testing.T) {
 
 	router.ServeHTTP(w, req)
 	require.NotEqual(t, http.StatusNotFound, w.Code)
+}
+
+func TestGatewayRoutes_QwenImages(t *testing.T) {
+	router := newGatewayRoutesTestRouter(service.PlatformQwen)
+
+	for _, path := range []string{
+		"/v1/images/generations",
+		"/images/generations",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"qwen-image","prompt":"draw a cat"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s should reach image generation handler", path)
+	}
+
+	for _, path := range []string{
+		"/v1/images/edits",
+		"/images/edits",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"qwen-image","prompt":"draw a cat"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusNotFound, w.Code)
+
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &payload))
+		errorObj, ok := payload["error"].(map[string]any)
+		require.True(t, ok, "error object missing for path=%s", path)
+		require.Equal(t, "not_found_error", errorObj["type"])
+		message, _ := errorObj["message"].(string)
+		require.NotEmpty(t, message)
+	}
 }

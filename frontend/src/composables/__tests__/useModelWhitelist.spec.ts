@@ -51,6 +51,13 @@ describe('useModelWhitelist', () => {
     expect(models.indexOf('gemini-2.5-flash-image')).toBeLessThan(models.indexOf('gemini-2.5-flash'))
   })
 
+  it('returns qwen wanx image models', () => {
+    const models = getModelsByPlatform('qwen')
+
+    expect(models).toContain('wan2.6-t2i')
+    expect(models).toContain('wanx2.1-t2i-turbo')
+  })
+
   it('antigravity 模型列表会把新的 Gemini 图片模型排在前面', () => {
     const models = getModelsByPlatform('antigravity')
 
