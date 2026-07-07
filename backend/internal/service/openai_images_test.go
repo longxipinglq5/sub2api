@@ -58,6 +58,68 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_JSON(t *testing.T) {
 	require.False(t, parsed.Multipart)
 }
 
+func TestParseOpenAIImagesRequest_AllowsWanxTextToImageModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	models := []string{
+		"wan2.6-t2i",
+		"wan2.5-t2i-preview",
+		"wan2.2-t2i-flash",
+		"wanx2.1-t2i-turbo",
+		"wanx2.1-t2i-plus",
+	}
+
+	svc := &OpenAIGatewayService{}
+	for _, model := range models {
+		t.Run(model, func(t *testing.T) {
+			body := []byte(`{"model":"` + model + `","prompt":"draw a cat"}`)
+
+			req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = req
+
+			parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+			require.NoError(t, err)
+			require.NotNil(t, parsed)
+			require.Equal(t, model, parsed.Model)
+		})
+	}
+}
+
+func TestParseOpenAIImagesRequest_RejectsWanxStreaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"wan2.6-t2i","prompt":"draw a cat","stream":true}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "streaming is not supported")
+}
+
+func TestParseOpenAIImagesRequest_RejectsWanxB64JSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"wan2.6-t2i","prompt":"draw a cat","response_format":"b64_json"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "b64_json response_format is not supported")
+}
+
 func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartEdit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
