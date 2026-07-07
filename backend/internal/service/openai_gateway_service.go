@@ -2443,6 +2443,50 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 	}
 }
 
+func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImagesPlatform(
+	ctx context.Context,
+	groupID *int64,
+	platform string,
+	sessionHash string,
+	requestedModel string,
+	excludedIDs map[int64]struct{},
+	requiredCapability OpenAIImagesCapability,
+) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	normalizedPlatform := normalizeOpenAICompatiblePlatform(platform)
+	selection, decision, err := s.selectAccountWithScheduler(
+		ctx,
+		groupID,
+		"",
+		sessionHash,
+		requestedModel,
+		excludedIDs,
+		OpenAIUpstreamTransportHTTPSSE,
+		"",
+		requiredCapability,
+		false,
+		normalizedPlatform,
+	)
+	if err == nil && selection != nil && selection.Account != nil {
+		return selection, decision, nil
+	}
+	if normalizedPlatform == PlatformOpenAI && requiredCapability == OpenAIImagesCapabilityNative {
+		return s.selectAccountWithScheduler(
+			ctx,
+			groupID,
+			"",
+			sessionHash,
+			requestedModel,
+			excludedIDs,
+			OpenAIUpstreamTransportHTTPSSE,
+			"",
+			OpenAIImagesCapabilityBasic,
+			false,
+			normalizedPlatform,
+		)
+	}
+	return selection, decision, err
+}
+
 func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool {
 	switch statusCode {
 	case 401, 402, 403, 429, 529:
