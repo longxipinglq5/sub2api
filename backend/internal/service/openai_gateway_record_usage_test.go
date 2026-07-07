@@ -1599,6 +1599,50 @@ func TestOpenAIGatewayServiceRecordUsage_ImageUsesPerImageBillingEvenWithUsageTo
 	require.InDelta(t, 0.0, usageRepo.lastLog.ImageOutputCost, 1e-12)
 }
 
+func TestOpenAIGatewayServiceRecordUsage_QwenWanxUsesImageBilling(t *testing.T) {
+	price := 0.02
+	groupID := int64(10)
+	user := &User{ID: 1}
+	apiKey := &APIKey{
+		ID:      2,
+		UserID:  1,
+		User:    user,
+		GroupID: &groupID,
+		Group:   &Group{ID: groupID, Platform: PlatformQwen, ImageRateMultiplier: 1.0},
+	}
+	account := &Account{ID: 3, Platform: PlatformQwen, Type: AccountTypeAPIKey}
+	result := &OpenAIForwardResult{
+		RequestID:    "req-qwen-image",
+		Model:        "wan2.6-t2i",
+		BillingModel: "wan2.6-t2i",
+		ImageCount:   2,
+		ImageSize:    "1024x1024",
+		Duration:     time.Second,
+	}
+
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	svc.resolver = newOpenAIImageChannelPricingResolverForTest(t, groupID, "wan2.6-t2i", price)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result:        result,
+		APIKey:        apiKey,
+		User:          user,
+		Account:       account,
+		QuotaPlatform: PlatformQwen,
+		ChannelUsageFields: ChannelUsageFields{
+			OriginalModel: "wan2.6-t2i",
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.NotNil(t, usageRepo.lastLog.BillingMode)
+	require.Equal(t, string(BillingModeImage), *usageRepo.lastLog.BillingMode)
+	require.Equal(t, 2, usageRepo.lastLog.ImageCount)
+	require.InDelta(t, 0.04, usageRepo.lastLog.TotalCost, 1e-9)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_ImageSharedMultiplierPreservesExistingBehavior(t *testing.T) {
 	imagePrice := 0.2
 	groupID := int64(121)
