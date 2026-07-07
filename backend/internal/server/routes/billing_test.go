@@ -226,6 +226,52 @@ func TestBillingRoutesAcceptAPIKeyAsUpstreamKey(t *testing.T) {
 	}
 }
 
+func TestBillingRoutesRegistersAccountEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	user := &service.User{
+		ID:           11,
+		Email:        "billing-account@example.com",
+		Role:         service.RoleUser,
+		Status:       service.StatusActive,
+		TokenVersion: 1,
+	}
+	cfg := &config.Config{}
+	cfg.JWT.Secret = "billing-route-account-secret"
+	cfg.JWT.AccessTokenExpireMinutes = 60
+	userRepo := &billingRouteUserRepo{users: map[int64]*service.User{user.ID: user}}
+	authSvc := service.NewAuthService(nil, userRepo, nil, nil, cfg, nil, nil, nil, nil, nil, nil, nil, nil)
+	userSvc := service.NewUserService(userRepo, nil, nil, nil)
+	token, err := authSvc.GenerateToken(user)
+	require.NoError(t, err)
+
+	billingSvc := &handlerBillingRouteStubService{}
+	router := gin.New()
+	RegisterBillingRoutes(
+		router,
+		&handler.Handlers{Billing: handler.NewBillingHandler(billingSvc)},
+		middleware.NewJWTAuthMiddleware(authSvc, userSvc),
+		nil,
+		nil,
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/billing/account", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Request-ID", "req-account-route")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, user.ID, billingSvc.lastAuth.UserID)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, float64(0), body["code"])
+	require.Equal(t, "req-account-route", body["request_id"])
+	data := body["data"].(map[string]any)
+	require.NotNil(t, data["balance"])
+}
+
 func TestBillingRoutesRejectInvalidAPIKeyWithoutJWTFallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -275,6 +321,21 @@ func (s *handlerBillingRouteStubService) Capabilities(context.Context) (service.
 func (s *handlerBillingRouteStubService) ListProviderKeys(_ context.Context, auth service.BillingAuthSubject, _ service.BillingProviderKeysQuery) (service.BillingProviderKeysResponse, error) {
 	s.lastAuth = auth
 	return service.BillingProviderKeysResponse{}, nil
+}
+
+func (s *handlerBillingRouteStubService) AccountStatus(_ context.Context, auth service.BillingAuthSubject) (service.BillingAccountStatus, error) {
+	s.lastAuth = auth
+	usedTokens := int64(25)
+	return service.BillingAccountStatus{
+		Subscription: &service.BillingSubscription{
+			PlanName:   "Professional",
+			UsedTokens: &usedTokens,
+		},
+		Balance: &service.BillingAccountBalance{
+			Amount:   12.5,
+			Currency: "USD",
+		},
+	}, nil
 }
 
 func (s *handlerBillingRouteStubService) Summary(context.Context, service.BillingAuthSubject, service.BillingQuery) (service.BillingSummaryResponse, error) {

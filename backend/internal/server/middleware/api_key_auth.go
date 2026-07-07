@@ -194,16 +194,22 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			if subscription != nil {
 				needsMaintenance, validateErr := subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
 				if validateErr != nil {
-					code := "SUBSCRIPTION_INVALID"
-					status := 403
-					if errors.Is(validateErr, service.ErrDailyLimitExceeded) ||
-						errors.Is(validateErr, service.ErrWeeklyLimitExceeded) ||
-						errors.Is(validateErr, service.ErrMonthlyLimitExceeded) {
-						code = "USAGE_LIMIT_EXCEEDED"
-						status = 429
+					if apiKey.Group != nil && apiKey.Group.AllowsSubscriptionBalanceFallback() && isSubscriptionUsageLimitError(validateErr) {
+						if apiKey.User.Balance <= 0 {
+							AbortWithError(c, 403, "INSUFFICIENT_BALANCE", "Insufficient account balance")
+							return
+						}
+						markHybridBalanceFallback(c)
+					} else {
+						code := "SUBSCRIPTION_INVALID"
+						status := 403
+						if isSubscriptionUsageLimitError(validateErr) {
+							code = "USAGE_LIMIT_EXCEEDED"
+							status = 429
+						}
+						AbortWithError(c, status, code, validateErr.Error())
+						return
 					}
-					AbortWithError(c, status, code, validateErr.Error())
-					return
 				}
 
 				// 窗口维护异步化（不阻塞请求）
@@ -286,6 +292,20 @@ func setGroupContext(c *gin.Context, group *service.Group) {
 		return
 	}
 	ctx := context.WithValue(c.Request.Context(), ctxkey.Group, group)
+	c.Request = c.Request.WithContext(ctx)
+}
+
+func isSubscriptionUsageLimitError(err error) bool {
+	return errors.Is(err, service.ErrDailyLimitExceeded) ||
+		errors.Is(err, service.ErrWeeklyLimitExceeded) ||
+		errors.Is(err, service.ErrMonthlyLimitExceeded)
+}
+
+func markHybridBalanceFallback(c *gin.Context) {
+	if c == nil || c.Request == nil {
+		return
+	}
+	ctx := context.WithValue(c.Request.Context(), ctxkey.HybridBalanceFallback, true)
 	c.Request = c.Request.WithContext(ctx)
 }
 

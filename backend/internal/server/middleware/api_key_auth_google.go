@@ -92,14 +92,20 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 
 			needsMaintenance, err := subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
 			if err != nil {
-				status := 403
-				if errors.Is(err, service.ErrDailyLimitExceeded) ||
-					errors.Is(err, service.ErrWeeklyLimitExceeded) ||
-					errors.Is(err, service.ErrMonthlyLimitExceeded) {
-					status = 429
+				if apiKey.Group != nil && apiKey.Group.AllowsSubscriptionBalanceFallback() && isSubscriptionUsageLimitError(err) {
+					if apiKey.User.Balance <= 0 {
+						abortWithGoogleError(c, 403, "Insufficient account balance")
+						return
+					}
+					markHybridBalanceFallback(c)
+				} else {
+					status := 403
+					if isSubscriptionUsageLimitError(err) {
+						status = 429
+					}
+					abortWithGoogleError(c, status, err.Error())
+					return
 				}
-				abortWithGoogleError(c, status, err.Error())
-				return
 			}
 
 			c.Set(string(ContextKeySubscription), subscription)

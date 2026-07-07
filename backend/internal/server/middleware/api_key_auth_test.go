@@ -176,6 +176,64 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 		require.Equal(t, http.StatusTooManyRequests, w.Code)
 		require.Contains(t, w.Body.String(), "USAGE_LIMIT_EXCEEDED")
 	})
+
+	t.Run("hybrid_mode_quota_exhausted_marks_balance_fallback", func(t *testing.T) {
+		cfg := &config.Config{RunMode: config.RunModeStandard}
+		hybridGroup := *group
+		hybridGroup.SubscriptionType = service.SubscriptionTypeHybrid
+		hybridKey := *apiKey
+		hybridKey.Group = &hybridGroup
+		hybridKey.GroupID = &hybridGroup.ID
+		apiKeyService := service.NewAPIKeyService(&stubApiKeyRepo{
+			getByKey: func(ctx context.Context, key string) (*service.APIKey, error) {
+				if key != hybridKey.Key {
+					return nil, service.ErrAPIKeyNotFound
+				}
+				clone := hybridKey
+				return &clone, nil
+			},
+		}, nil, nil, nil, nil, nil, cfg)
+
+		now := time.Now()
+		sub := &service.UserSubscription{
+			ID:               55,
+			UserID:           user.ID,
+			GroupID:          hybridGroup.ID,
+			Status:           service.SubscriptionStatusActive,
+			ExpiresAt:        now.Add(24 * time.Hour),
+			DailyWindowStart: &now,
+			DailyUsageUSD:    10,
+		}
+		subscriptionRepo := &stubUserSubscriptionRepo{
+			getActive: func(ctx context.Context, userID, groupID int64) (*service.UserSubscription, error) {
+				if userID != sub.UserID || groupID != sub.GroupID {
+					return nil, service.ErrSubscriptionNotFound
+				}
+				clone := *sub
+				return &clone, nil
+			},
+			updateStatus:   func(ctx context.Context, subscriptionID int64, status string) error { return nil },
+			activateWindow: func(ctx context.Context, id int64, start time.Time) error { return nil },
+			resetDaily:     func(ctx context.Context, id int64, start time.Time) error { return nil },
+			resetWeekly:    func(ctx context.Context, id int64, start time.Time) error { return nil },
+			resetMonthly:   func(ctx context.Context, id int64, start time.Time) error { return nil },
+		}
+		subscriptionService := service.NewSubscriptionService(nil, subscriptionRepo, nil, nil, cfg)
+		router := gin.New()
+		router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, cfg)))
+		router.GET("/t", func(c *gin.Context) {
+			fallback, _ := c.Request.Context().Value(ctxkey.HybridBalanceFallback).(bool)
+			require.True(t, fallback)
+			c.JSON(http.StatusOK, gin.H{"ok": true})
+		})
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/t", nil)
+		req.Header.Set("x-api-key", hybridKey.Key)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+	})
 }
 
 func TestAPIKeyAuthSetsGroupContext(t *testing.T) {

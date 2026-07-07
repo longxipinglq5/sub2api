@@ -2009,7 +2009,7 @@ func (s *adminServiceImpl) validateFallbackGroupOnInvalidRequest(ctx context.Con
 	if platform != PlatformAnthropic && platform != PlatformAntigravity {
 		return fmt.Errorf("invalid request fallback only supported for anthropic or antigravity groups")
 	}
-	if subscriptionType == SubscriptionTypeSubscription {
+	if subscriptionType == SubscriptionTypeSubscription || subscriptionType == SubscriptionTypeHybrid {
 		return fmt.Errorf("subscription groups cannot set invalid request fallback")
 	}
 	if currentGroupID > 0 && currentGroupID == fallbackGroupID {
@@ -2023,7 +2023,7 @@ func (s *adminServiceImpl) validateFallbackGroupOnInvalidRequest(ctx context.Con
 	if fallbackGroup.Platform != PlatformAnthropic {
 		return fmt.Errorf("fallback group must be anthropic platform")
 	}
-	if fallbackGroup.SubscriptionType == SubscriptionTypeSubscription {
+	if fallbackGroup.SubscriptionType == SubscriptionTypeSubscription || fallbackGroup.SubscriptionType == SubscriptionTypeHybrid {
 		return fmt.Errorf("fallback group cannot be subscription type")
 	}
 	if fallbackGroup.FallbackGroupIDOnInvalidRequest != nil {

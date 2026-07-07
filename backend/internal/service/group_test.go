@@ -90,3 +90,11 @@ func TestGroup_GetImagePrice_PartialConfig(t *testing.T) {
 	require.Nil(t, group.GetImagePrice("2K"))
 	require.Nil(t, group.GetImagePrice("4K"))
 }
+
+func TestGroup_SubscriptionTypeHybridRequiresSubscriptionAndAllowsBalanceFallback(t *testing.T) {
+	group := &Group{SubscriptionType: SubscriptionTypeHybrid}
+
+	require.True(t, group.IsSubscriptionType())
+	require.True(t, group.IsHybridSubscriptionType())
+	require.True(t, group.AllowsSubscriptionBalanceFallback())
+}

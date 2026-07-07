@@ -113,6 +113,13 @@ describe('AppHeader admin entry', () => {
     expect(adminLink.text()).toContain('管理后台')
   })
 
+  it('does not show the upstream Sub2API GitHub link for admins', async () => {
+    const wrapper = await mountHeaderFor('admin')
+
+    expect(wrapper.find('a[href="https://github.com/Wei-Shaw/sub2api"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('GitHub')
+  })
+
   it('does not show the admin dashboard link for normal users', async () => {
     const wrapper = await mountHeaderFor('user')
 

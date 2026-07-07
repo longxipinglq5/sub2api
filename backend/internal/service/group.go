@@ -82,7 +82,15 @@ func (g *Group) IsActive() bool {
 }
 
 func (g *Group) IsSubscriptionType() bool {
-	return g.SubscriptionType == SubscriptionTypeSubscription
+	return g.SubscriptionType == SubscriptionTypeSubscription || g.SubscriptionType == SubscriptionTypeHybrid
+}
+
+func (g *Group) IsHybridSubscriptionType() bool {
+	return g != nil && g.SubscriptionType == SubscriptionTypeHybrid
+}
+
+func (g *Group) AllowsSubscriptionBalanceFallback() bool {
+	return g.IsHybridSubscriptionType()
 }
 
 func (g *Group) HasDailyLimit() bool {

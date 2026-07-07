@@ -43,6 +43,15 @@ func (h *BillingHandler) ProviderKeys(c *gin.Context) {
 	h.writeResult(c, data, err)
 }
 
+func (h *BillingHandler) AccountStatus(c *gin.Context) {
+	auth, ok := h.authSubject(c)
+	if !ok {
+		return
+	}
+	data, err := h.billing.AccountStatus(c.Request.Context(), auth)
+	h.writeResult(c, data, err)
+}
+
 func (h *BillingHandler) Summary(c *gin.Context) {
 	auth, ok := h.authSubject(c)
 	if !ok {

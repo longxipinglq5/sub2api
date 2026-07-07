@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,6 +62,22 @@ func TestCheckBillingEligibility_AllowsBalanceAtMinimumReserve(t *testing.T) {
 
 	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "")
 	require.NoError(t, err)
+}
+
+func TestCheckBillingEligibility_HybridFallbackUsesBalanceEligibility(t *testing.T) {
+	cache := &balanceEligibilityCacheStub{balance: 0.005}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.01
+	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(svc.Stop)
+
+	ctx := context.WithValue(context.Background(), ctxkey.HybridBalanceFallback, true)
+	err := svc.CheckBillingEligibility(ctx, &User{ID: 1}, nil, &Group{
+		ID:               10,
+		SubscriptionType: SubscriptionTypeHybrid,
+	}, &UserSubscription{ID: 20, Status: SubscriptionStatusActive}, "")
+
+	require.ErrorIs(t, err, ErrInsufficientBalance)
 }
 
 func TestSyncBalanceCacheAfterDeduction_InvalidatesExhaustedBalance(t *testing.T) {

@@ -41,6 +41,9 @@ const (
 	// Group 认证后的分组信息，由 API Key 认证中间件设置
 	Group Key = "ctx_group"
 
+	// HybridBalanceFallback 标识混合模式请求因订阅周期额度耗尽而切换为余额计费。
+	HybridBalanceFallback Key = "ctx_hybrid_balance_fallback"
+
 	// IsMaxTokensOneHaikuRequest 标识当前请求是否为 max_tokens=1 + haiku 模型的探测请求
 	// 用于 ClaudeCodeOnly 验证绕过（绕过 system prompt 检查，但仍需验证 User-Agent）
 	IsMaxTokensOneHaikuRequest Key = "ctx_is_max_tokens_one_haiku"

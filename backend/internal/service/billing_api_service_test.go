@@ -36,11 +36,86 @@ func TestBillingAPIService_CapabilitiesAdvertisesMultiProviderKeyQueries(t *test
 	require.True(t, result.Features["multi_key_query"])
 }
 
+func TestBillingAPIService_CapabilitiesAdvertisesAccountStatus(t *testing.T) {
+	svc, _, cleanup := newBillingAPITestService(t)
+	defer cleanup()
+
+	result, err := svc.Capabilities(context.Background())
+	require.NoError(t, err)
+	require.True(t, result.Features["account_status"])
+}
+
 type billingUnixMilliArg int64
 
 func (a billingUnixMilliArg) Match(v driver.Value) bool {
 	t, ok := v.(time.Time)
 	return ok && t.UnixMilli() == int64(a)
+}
+
+func TestBillingAPIService_AccountStatusReturnsSubscriptionAndBalance(t *testing.T) {
+	svc, mock, cleanup := newBillingAPITestService(t)
+	defer cleanup()
+
+	now := time.Unix(1782828000, 0).UTC()
+	svc.now = func() time.Time { return now }
+	start := now.Add(-24 * time.Hour)
+	end := now.Add(29 * 24 * time.Hour)
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT balance::double precision FROM users")).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(88.5))
+
+	mock.ExpectQuery("(?s)FROM user_subscriptions us").
+		WithArgs(int64(7), now).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "plan_name", "starts_at", "expires_at",
+		}).AddRow(int64(101), "Professional", start, end))
+
+	mock.ExpectQuery("(?s)FROM usage_logs ul").
+		WithArgs(int64(101), start, end).
+		WillReturnRows(sqlmock.NewRows([]string{"used_tokens"}).AddRow(int64(376)))
+
+	result, err := svc.AccountStatus(context.Background(), BillingAuthSubject{UserID: 7, Role: RoleUser})
+	require.NoError(t, err)
+	require.NotNil(t, result.Balance)
+	require.Equal(t, 88.5, result.Balance.Amount)
+	require.Equal(t, "USD", result.Balance.Currency)
+
+	require.NotNil(t, result.Subscription)
+	require.Equal(t, "Professional", result.Subscription.PlanName)
+	require.NotNil(t, result.Subscription.PeriodStartMS)
+	require.Equal(t, start.UnixMilli(), *result.Subscription.PeriodStartMS)
+	require.NotNil(t, result.Subscription.PeriodEndMS)
+	require.Equal(t, end.UnixMilli(), *result.Subscription.PeriodEndMS)
+	require.Nil(t, result.Subscription.QuotaTokens)
+	require.NotNil(t, result.Subscription.UsedTokens)
+	require.Equal(t, int64(376), *result.Subscription.UsedTokens)
+	require.Nil(t, result.Subscription.RemainingTokens)
+}
+
+func TestBillingAPIService_AccountStatusReturnsNullSubscription(t *testing.T) {
+	svc, mock, cleanup := newBillingAPITestService(t)
+	defer cleanup()
+
+	now := time.Unix(1782828000, 0).UTC()
+	svc.now = func() time.Time { return now }
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT balance::double precision FROM users")).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(12.25))
+
+	mock.ExpectQuery("(?s)FROM user_subscriptions us").
+		WithArgs(int64(7), now).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "plan_name", "starts_at", "expires_at",
+		}))
+
+	result, err := svc.AccountStatus(context.Background(), BillingAuthSubject{UserID: 7, Role: RoleUser})
+	require.NoError(t, err)
+	require.NotNil(t, result.Balance)
+	require.Equal(t, 12.25, result.Balance.Amount)
+	require.Equal(t, "USD", result.Balance.Currency)
+	require.Nil(t, result.Subscription)
 }
 
 func TestBillingAPIService_ListProviderKeysRedactsSecrets(t *testing.T) {

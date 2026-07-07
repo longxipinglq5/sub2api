@@ -16,9 +16,11 @@ import (
 
 type billingHandlerStubService struct {
 	capabilitiesResp service.BillingCapabilitiesResponse
+	accountResp      service.BillingAccountStatus
 	listKeysResp     service.BillingProviderKeysResponse
 	summaryResp      service.BillingSummaryResponse
 	lastAuth         service.BillingAuthSubject
+	accountCalled    bool
 	summaryCalled    bool
 }
 
@@ -29,6 +31,12 @@ func (s *billingHandlerStubService) Capabilities(context.Context) (service.Billi
 func (s *billingHandlerStubService) ListProviderKeys(_ context.Context, auth service.BillingAuthSubject, _ service.BillingProviderKeysQuery) (service.BillingProviderKeysResponse, error) {
 	s.lastAuth = auth
 	return s.listKeysResp, nil
+}
+
+func (s *billingHandlerStubService) AccountStatus(_ context.Context, auth service.BillingAuthSubject) (service.BillingAccountStatus, error) {
+	s.lastAuth = auth
+	s.accountCalled = true
+	return s.accountResp, nil
 }
 
 func (s *billingHandlerStubService) Summary(_ context.Context, auth service.BillingAuthSubject, _ service.BillingQuery) (service.BillingSummaryResponse, error) {
@@ -123,6 +131,56 @@ func TestBillingHandlerProviderKeysRequiresAuthenticatedUser(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, "UNAUTHENTICATED", body["code"])
 	require.Equal(t, "req-auth", body["request_id"])
+}
+
+func TestBillingHandlerAccountStatusPassesAuthenticatedSubject(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	periodStart := int64(1782748800000)
+	periodEnd := int64(1785340800000)
+	usedTokens := int64(1234)
+	stub := &billingHandlerStubService{
+		accountResp: service.BillingAccountStatus{
+			Subscription: &service.BillingSubscription{
+				PlanName:      "Professional",
+				PeriodStartMS: &periodStart,
+				PeriodEndMS:   &periodEnd,
+				UsedTokens:    &usedTokens,
+			},
+			Balance: &service.BillingAccountBalance{
+				Amount:   88.5,
+				Currency: "USD",
+			},
+		},
+	}
+	handler := NewBillingHandler(stub)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(servermiddleware.ContextKeyUser), servermiddleware.AuthSubject{UserID: 7})
+		c.Set(string(servermiddleware.ContextKeyUserRole), service.RoleUser)
+		c.Next()
+	})
+	router.GET("/api/billing/account", handler.AccountStatus)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/billing/account", nil)
+	req.Header.Set("X-Request-ID", "req-account")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.True(t, stub.accountCalled)
+	require.Equal(t, int64(7), stub.lastAuth.UserID)
+	require.Equal(t, service.RoleUser, stub.lastAuth.Role)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, float64(0), body["code"])
+	require.Equal(t, "ok", body["message"])
+	require.Equal(t, "req-account", body["request_id"])
+	data := body["data"].(map[string]any)
+	require.NotNil(t, data["subscription"])
+	require.NotNil(t, data["balance"])
 }
 
 func TestBillingHandlerSummaryPassesAuthenticatedSubject(t *testing.T) {

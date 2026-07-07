@@ -74,9 +74,13 @@ const form = reactive({ email: '', password: '', username: '', notes: '', balanc
 const { loading, submit } = useForm({
   form,
   submitFn: async (data) => {
-    const { balance: rawBalance, ...rest } = data
+    const { balance: rawBalance, concurrency: rawConcurrency, rpm_limit: rawRPMLimit, ...rest } = data
     const balance = String(rawBalance).trim()
-    const payload: typeof rest & { balance?: number } = { ...rest }
+    const payload: typeof rest & { balance?: number; concurrency: number; rpm_limit: number } = {
+      ...rest,
+      concurrency: Number(rawConcurrency) || 1,
+      rpm_limit: Number(rawRPMLimit) || 0
+    }
     if (balance !== '') {
       payload.balance = Number(balance)
     }

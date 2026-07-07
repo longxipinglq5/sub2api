@@ -452,12 +452,9 @@ func extractCCStreamUsage(payload string) *OpenAIUsage {
 	if !usageResult.Exists() || !usageResult.IsObject() {
 		return nil
 	}
-	u := OpenAIUsage{
-		InputTokens:  int(gjson.Get(payload, "usage.prompt_tokens").Int()),
-		OutputTokens: int(gjson.Get(payload, "usage.completion_tokens").Int()),
-	}
-	if cached := gjson.Get(payload, "usage.prompt_tokens_details.cached_tokens"); cached.Exists() {
-		u.CacheReadInputTokens = int(cached.Int())
+	u, ok := openAIUsageFromGJSON(usageResult)
+	if !ok {
+		return nil
 	}
 	return &u
 }
@@ -487,7 +484,7 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	var ccResp apicompat.ChatCompletionsResponse
 	var usage OpenAIUsage
 	if err := json.Unmarshal(respBody, &ccResp); err == nil {
-		if isRawChatNonStreamingEmptyAssistantCompletion(ccResp) {
+		if account.Platform != PlatformGrok && isRawChatNonStreamingEmptyAssistantCompletion(ccResp) {
 			return nil, newOpenAISilentRefusalFailoverError(c, account, requestID)
 		}
 		if ccResp.Usage != nil {

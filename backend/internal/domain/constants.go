@@ -59,6 +59,7 @@ const (
 const (
 	SubscriptionTypeStandard     = "standard"     // 标准计费模式（按余额扣费）
 	SubscriptionTypeSubscription = "subscription" // 订阅模式（按限额控制）
+	SubscriptionTypeHybrid       = "hybrid"       // 混合模式（订阅额度优先，余额兜底）
 )
 
 // Subscription status constants

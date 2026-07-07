@@ -47,6 +47,14 @@ describe('buildApiKeyGroupFilterOptions', () => {
     expect(opts.find((o) => o.label === 'Exclusive')).toBeUndefined()
   })
 
+  it('treats subscription_type=hybrid as subscription even if is_exclusive', () => {
+    const groups = [g({ id: 10, name: 'Hybrid', is_exclusive: true, subscription_type: 'hybrid' })]
+    const opts = buildApiKeyGroupFilterOptions(groups, labels)
+    expect(opts).toContainEqual({ value: 10, label: 'Hybrid' })
+    expect(opts.find((o) => o.label === 'Subscription')).toBeDefined()
+    expect(opts.find((o) => o.label === 'Exclusive')).toBeUndefined()
+  })
+
   it('skips empty section headers', () => {
     const groups = [g({ id: 2, name: 'Pub', is_exclusive: false, subscription_type: 'standard' })]
     const opts = buildApiKeyGroupFilterOptions(groups, labels)

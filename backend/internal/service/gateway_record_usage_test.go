@@ -167,6 +167,46 @@ func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID
 	require.Equal(t, "local:req-local-123", billingRepo.lastCmd.RequestPayloadHash)
 }
 
+func TestGatewayServiceRecordUsage_HybridFallbackBillsBalance(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	groupID := int64(902)
+	ctx := context.WithValue(context.Background(), ctxkey.HybridBalanceFallback, true)
+
+	err := svc.RecordUsage(ctx, &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_hybrid_fallback",
+			Usage: ClaudeUsage{
+				InputTokens:  1200,
+				OutputTokens: 300,
+			},
+			Model:    "claude-sonnet-4",
+			Duration: time.Second,
+		},
+		APIKey: &APIKey{
+			ID:      502,
+			GroupID: &groupID,
+			Group: &Group{
+				ID:               groupID,
+				SubscriptionType: SubscriptionTypeHybrid,
+				RateMultiplier:   1,
+			},
+		},
+		User:         &User{ID: 602},
+		Account:      &Account{ID: 702},
+		Subscription: &UserSubscription{ID: 802},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, BillingTypeBalance, usageRepo.lastLog.BillingType)
+	require.NotNil(t, usageRepo.lastLog.SubscriptionID)
+	require.NotNil(t, billingRepo.lastCmd)
+	require.Greater(t, billingRepo.lastCmd.BalanceCost, 0.0)
+	require.Zero(t, billingRepo.lastCmd.SubscriptionCost)
+}
+
 func TestGatewayServiceRecordUsage_PreservesRequestedAndUpstreamModels(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})

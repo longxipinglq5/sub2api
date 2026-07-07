@@ -50,6 +50,7 @@ const (
 type BillingAPI interface {
 	Capabilities(ctx context.Context) (BillingCapabilitiesResponse, error)
 	ListProviderKeys(ctx context.Context, auth BillingAuthSubject, query BillingProviderKeysQuery) (BillingProviderKeysResponse, error)
+	AccountStatus(ctx context.Context, auth BillingAuthSubject) (BillingAccountStatus, error)
 	Summary(ctx context.Context, auth BillingAuthSubject, query BillingQuery) (BillingSummaryResponse, error)
 	Timeseries(ctx context.Context, auth BillingAuthSubject, query BillingQuery) (BillingTimeseriesResponse, error)
 	Breakdown(ctx context.Context, auth BillingAuthSubject, req BillingBreakdownRequest) (BillingBreakdownResponse, error)
@@ -163,6 +164,25 @@ type BillingProviderKey struct {
 	LatestAvailableEndMS     *int64         `json:"latest_available_end_ms"`
 	LastSyncedAtMS           *int64         `json:"last_synced_at_ms"`
 	Metadata                 map[string]any `json:"metadata,omitempty"`
+}
+
+type BillingSubscription struct {
+	PlanName        string `json:"plan_name"`
+	PeriodStartMS   *int64 `json:"period_start_ms"`
+	PeriodEndMS     *int64 `json:"period_end_ms"`
+	QuotaTokens     *int64 `json:"quota_tokens"`
+	UsedTokens      *int64 `json:"used_tokens"`
+	RemainingTokens *int64 `json:"remaining_tokens"`
+}
+
+type BillingAccountBalance struct {
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
+}
+
+type BillingAccountStatus struct {
+	Subscription *BillingSubscription   `json:"subscription"`
+	Balance      *BillingAccountBalance `json:"balance"`
 }
 
 type BillingSummary struct {
@@ -326,6 +346,7 @@ func (s *BillingAPIService) Capabilities(_ context.Context) (BillingCapabilities
 			"export_csv":      true,
 			"export_xlsx":     false,
 			"multi_key_query": true,
+			"account_status":  true,
 		},
 	}, nil
 }
@@ -442,6 +463,95 @@ func (s *BillingAPIService) ListProviderKeys(ctx context.Context, auth BillingAu
 		out.Items = append(out.Items, item)
 	}
 	return out, rows.Err()
+}
+
+func (s *BillingAPIService) AccountStatus(ctx context.Context, auth BillingAuthSubject) (BillingAccountStatus, error) {
+	if auth.UserID <= 0 {
+		return BillingAccountStatus{}, newBillingError(401, BillingErrUnauthenticated, "User is not authenticated.", nil)
+	}
+
+	var balanceAmount float64
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT balance::double precision FROM users WHERE id = $1 AND deleted_at IS NULL
+	`, auth.UserID).Scan(&balanceAmount); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return BillingAccountStatus{}, newBillingError(404, BillingErrNotFound, "Billing account was not found.", nil)
+		}
+		return BillingAccountStatus{}, err
+	}
+
+	status := BillingAccountStatus{
+		Balance: &BillingAccountBalance{
+			Amount:   balanceAmount,
+			Currency: "USD",
+		},
+	}
+
+	now := s.now()
+	var (
+		subscriptionID int64
+		planName       string
+		startsAt       time.Time
+		expiresAt      time.Time
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			us.id,
+			COALESCE(NULLIF(sp.name, ''), NULLIF(g.name, ''), '') AS plan_name,
+			us.starts_at,
+			us.expires_at
+		FROM user_subscriptions us
+		JOIN groups g ON g.id = us.group_id
+		LEFT JOIN LATERAL (
+			SELECT sp.name
+			FROM subscription_plans sp
+			WHERE sp.group_id = us.group_id
+			ORDER BY sp.for_sale DESC, sp.sort_order ASC, sp.id DESC
+			LIMIT 1
+		) sp ON TRUE
+		WHERE us.user_id = $1
+			AND us.deleted_at IS NULL
+			AND us.status = 'active'
+			AND us.starts_at <= $2
+			AND us.expires_at > $2
+		ORDER BY us.expires_at DESC, us.id DESC
+		LIMIT 1
+	`, auth.UserID, now).Scan(&subscriptionID, &planName, &startsAt, &expiresAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return status, nil
+		}
+		return BillingAccountStatus{}, err
+	}
+
+	var usedTokens int64
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(
+			ul.input_tokens +
+			ul.output_tokens +
+			ul.cache_creation_tokens +
+			ul.cache_read_tokens +
+			ul.cache_creation_5m_tokens +
+			ul.cache_creation_1h_tokens +
+			ul.image_output_tokens
+		), 0) AS used_tokens
+		FROM usage_logs ul
+		WHERE ul.subscription_id = $1
+			AND ul.created_at >= $2
+			AND ul.created_at < $3
+	`, subscriptionID, startsAt, expiresAt).Scan(&usedTokens); err != nil {
+		return BillingAccountStatus{}, err
+	}
+
+	periodStartMS := startsAt.UnixMilli()
+	periodEndMS := expiresAt.UnixMilli()
+	status.Subscription = &BillingSubscription{
+		PlanName:      planName,
+		PeriodStartMS: &periodStartMS,
+		PeriodEndMS:   &periodEndMS,
+		UsedTokens:    &usedTokens,
+	}
+	return status, nil
 }
 
 func (s *BillingAPIService) Summary(ctx context.Context, auth BillingAuthSubject, query BillingQuery) (BillingSummaryResponse, error) {

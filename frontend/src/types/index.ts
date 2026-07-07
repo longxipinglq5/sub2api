@@ -489,7 +489,7 @@ export interface PaginationConfig {
 
 export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok'
 
-export type SubscriptionType = 'standard' | 'subscription'
+export type SubscriptionType = 'standard' | 'subscription' | 'hybrid'
 
 export interface OpenAIMessagesDispatchModelConfig {
   opus_mapped_model?: string

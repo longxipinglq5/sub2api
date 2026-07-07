@@ -22,6 +22,7 @@ func RegisterBillingRoutes(
 	{
 		billing.GET("/capabilities", h.Billing.Capabilities)
 		billing.GET("/provider-keys", h.Billing.ProviderKeys)
+		billing.GET("/account", h.Billing.AccountStatus)
 		billing.POST("/summary", h.Billing.Summary)
 		billing.POST("/timeseries", h.Billing.Timeseries)
 		billing.POST("/breakdown", h.Billing.Breakdown)

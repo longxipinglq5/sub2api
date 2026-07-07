@@ -714,8 +714,9 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 		return ErrBillingServiceUnavailable
 	}
 
-	// 判断计费模式
-	isSubscriptionMode := group != nil && group.IsSubscriptionType() && subscription != nil
+	// 判断计费模式。混合模式在订阅周期额度耗尽后由 middleware 标记为余额兜底，
+	// 后续资格检查按余额模式执行，并继续套用 user×platform quota。
+	isSubscriptionMode := group != nil && group.IsSubscriptionType() && subscription != nil && !IsHybridBalanceFallback(ctx)
 
 	if isSubscriptionMode {
 		if err := s.checkSubscriptionEligibility(ctx, user.ID, group, subscription); err != nil {

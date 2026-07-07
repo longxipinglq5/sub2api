@@ -120,20 +120,16 @@
               <span
                 :class="[
                   'inline-block rounded-full px-2 py-0.5 text-xs font-medium',
-                  row.subscription_type === 'subscription'
+                  isSubscriptionBillingType(row.subscription_type)
                     ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400'
                     : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
                 ]"
               >
-                {{
-                  row.subscription_type === "subscription"
-                    ? t("admin.groups.subscription.subscription")
-                    : t("admin.groups.subscription.standard")
-                }}
+                {{ billingTypeLabel(row.subscription_type) }}
               </span>
               <!-- Subscription Limits - compact single line -->
               <div
-                v-if="row.subscription_type === 'subscription'"
+                v-if="isSubscriptionBillingType(row.subscription_type)"
                 class="text-xs text-gray-500 dark:text-gray-400"
               >
                 <template
@@ -510,7 +506,7 @@
           <p class="input-hint">{{ t("admin.groups.form.rpmLimitHint") }}</p>
         </div>
         <div
-          v-if="createForm.subscription_type !== 'subscription'"
+          v-if="!isSubscriptionBillingType(createForm.subscription_type)"
           data-tour="group-form-exclusive"
         >
           <div class="mb-1.5 flex items-center gap-1">
@@ -601,7 +597,7 @@
 
           <!-- Subscription limits (only show when subscription type is selected) -->
           <div
-            v-if="createForm.subscription_type === 'subscription'"
+            v-if="isSubscriptionBillingType(createForm.subscription_type)"
             class="space-y-4 border-l-2 border-primary-200 pl-4 dark:border-primary-800"
           >
             <div>
@@ -1379,7 +1375,7 @@
         <div
           v-if="
             ['anthropic', 'antigravity'].includes(createForm.platform) &&
-            createForm.subscription_type !== 'subscription'
+            !isSubscriptionBillingType(createForm.subscription_type)
           "
           class="border-t pt-4"
         >
@@ -1795,7 +1791,7 @@
           />
           <p class="input-hint">{{ t("admin.groups.form.rpmLimitHint") }}</p>
         </div>
-        <div v-if="editForm.subscription_type !== 'subscription'">
+        <div v-if="!isSubscriptionBillingType(editForm.subscription_type)">
           <div class="mb-1.5 flex items-center gap-1">
             <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
               {{ t("admin.groups.form.exclusive") }}
@@ -1889,7 +1885,7 @@
 
           <!-- Subscription limits (only show when subscription type is selected) -->
           <div
-            v-if="editForm.subscription_type === 'subscription'"
+            v-if="isSubscriptionBillingType(editForm.subscription_type)"
             class="space-y-4 border-l-2 border-primary-200 pl-4 dark:border-primary-800"
           >
             <div>
@@ -2663,7 +2659,7 @@
         <div
           v-if="
             ['anthropic', 'antigravity'].includes(editForm.platform) &&
-            editForm.subscription_type !== 'subscription'
+            !isSubscriptionBillingType(editForm.subscription_type)
           "
           class="border-t pt-4"
         >
@@ -3158,7 +3154,21 @@ const editStatusOptions = computed(() => [
 const subscriptionTypeOptions = computed(() => [
   { value: "standard", label: t("admin.groups.subscription.standard") },
   { value: "subscription", label: t("admin.groups.subscription.subscription") },
+  { value: "hybrid", label: t("admin.groups.subscription.hybrid") },
 ]);
+
+const isSubscriptionBillingType = (type?: SubscriptionType | string | null) =>
+  type === "subscription" || type === "hybrid";
+
+const billingTypeLabel = (type?: SubscriptionType | string | null) => {
+  if (type === "hybrid") {
+    return t("admin.groups.subscription.hybrid");
+  }
+  if (type === "subscription") {
+    return t("admin.groups.subscription.subscription");
+  }
+  return t("admin.groups.subscription.standard");
+};
 
 // 降级分组选项（创建时）- 仅包含 anthropic 平台且未启用 claude_code_only 的分组
 const fallbackGroupOptions = computed(() => {
@@ -3205,7 +3215,7 @@ const invalidRequestFallbackOptions = computed(() => {
     (g) =>
       g.platform === "anthropic" &&
       g.status === "active" &&
-      g.subscription_type !== "subscription" &&
+      !isSubscriptionBillingType(g.subscription_type) &&
       g.fallback_group_id_on_invalid_request === null,
   );
   eligibleGroups.forEach((g) => {
@@ -3224,7 +3234,7 @@ const invalidRequestFallbackOptionsForEdit = computed(() => {
     (g) =>
       g.platform === "anthropic" &&
       g.status === "active" &&
-      g.subscription_type !== "subscription" &&
+      !isSubscriptionBillingType(g.subscription_type) &&
       g.fallback_group_id_on_invalid_request === null &&
       g.id !== currentId,
   );
@@ -3760,7 +3770,7 @@ const deleteConfirmMessage = computed(() => {
   if (!deletingGroup.value) {
     return "";
   }
-  if (deletingGroup.value.subscription_type === "subscription") {
+  if (isSubscriptionBillingType(deletingGroup.value.subscription_type)) {
     return t("admin.groups.deleteConfirmSubscription", {
       name: deletingGroup.value.name,
     });
@@ -4226,7 +4236,7 @@ const confirmDelete = async () => {
 watch(
   () => createForm.subscription_type,
   (newVal) => {
-    if (newVal === "subscription") {
+    if (isSubscriptionBillingType(newVal)) {
       createForm.is_exclusive = true;
       createForm.fallback_group_id_on_invalid_request = null;
     }

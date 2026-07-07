@@ -122,6 +122,46 @@ func TestForwardAsRawChatCompletions_ForcesStreamUsageUpstreamAndPassesUsageDown
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }
 
+func TestForwardAsRawChatCompletions_ParsesResponsesStyleStreamUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-5.5","choices":[{"index":0,"delta":{"content":"ok"}}]}`,
+		"",
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-5.5","choices":[],"usage":{"input_tokens":11,"output_tokens":6,"total_tokens":17,"input_tokens_details":{"cached_tokens":4}}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_raw_responses_usage"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+	account := rawChatCompletionsTestAccount()
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, account, body, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 11, result.Usage.InputTokens)
+	require.Equal(t, 6, result.Usage.OutputTokens)
+	require.Equal(t, 4, result.Usage.CacheReadInputTokens)
+	require.True(t, gjson.GetBytes(upstream.lastBody, "stream_options.include_usage").Bool())
+	require.Contains(t, rec.Body.String(), `"input_tokens":11`)
+	require.Contains(t, rec.Body.String(), "data: [DONE]")
+}
+
 func TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContentNonStreaming(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

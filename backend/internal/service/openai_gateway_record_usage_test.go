@@ -364,6 +364,49 @@ func TestOpenAIGatewayServiceRecordUsage_MissingPricingRecordsZeroCostUsageLog(t
 	require.Zero(t, billingRepo.lastCmd.AccountQuotaCost)
 }
 
+func TestOpenAIGatewayServiceRecordUsage_HybridFallbackBillsBalance(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	groupID := int64(901)
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, userRepo, subRepo, nil)
+	ctx := context.WithValue(context.Background(), ctxkey.HybridBalanceFallback, true)
+
+	err := svc.RecordUsage(ctx, &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "resp_hybrid_fallback",
+			Usage: OpenAIUsage{
+				InputTokens:  1200,
+				OutputTokens: 300,
+			},
+			Model:    "gpt-5.1",
+			Duration: time.Second,
+		},
+		APIKey: &APIKey{
+			ID:      1003,
+			GroupID: &groupID,
+			Group: &Group{
+				ID:               groupID,
+				SubscriptionType: SubscriptionTypeHybrid,
+				RateMultiplier:   1,
+			},
+		},
+		User:         &User{ID: 2003},
+		Account:      &Account{ID: 3003, Type: AccountTypeAPIKey},
+		Subscription: &UserSubscription{ID: 4003},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, billingRepo.calls)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, BillingTypeBalance, usageRepo.lastLog.BillingType)
+	require.NotNil(t, usageRepo.lastLog.SubscriptionID, "usage log keeps subscription attribution for the group")
+	require.NotNil(t, billingRepo.lastCmd)
+	require.Greater(t, billingRepo.lastCmd.BalanceCost, 0.0)
+	require.Zero(t, billingRepo.lastCmd.SubscriptionCost)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_UsesUserSpecificGroupRate(t *testing.T) {
 	groupID := int64(11)
 	groupRate := 1.4
