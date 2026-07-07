@@ -162,4 +162,13 @@ func TestGatewayRoutes_QwenImages(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, w.Code)
 	require.Contains(t, w.Body.String(), "edits are not supported")
 	require.Contains(t, w.Body.String(), "not_found_error")
+
+	req = httptest.NewRequest(http.MethodPost, "/openai/v1/images/edits", strings.NewReader(`{"model":"qwen-image","prompt":"draw a cat"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusNotFound, w.Code)
+	require.Contains(t, w.Body.String(), "edits are not supported")
+	require.Contains(t, w.Body.String(), "not_found_error")
 }
