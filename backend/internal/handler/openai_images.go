@@ -137,8 +137,10 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, body)
 	requestCtx := service.WithOpenAIImageGenerationIntent(c.Request.Context())
 	groupPlatform := service.PlatformOpenAI
-	if apiKey != nil && apiKey.Group != nil && strings.TrimSpace(apiKey.Group.Platform) != "" {
-		groupPlatform = apiKey.Group.Platform
+	if apiKey != nil && apiKey.Group != nil {
+		if trimmed := strings.TrimSpace(apiKey.Group.Platform); trimmed != "" {
+			groupPlatform = trimmed
+		}
 	}
 
 	maxAccountSwitches := h.maxAccountSwitches

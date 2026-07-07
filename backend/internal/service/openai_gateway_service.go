@@ -2253,6 +2253,10 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 
 func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
 	platform = normalizeOpenAICompatiblePlatform(platform)
+	return s.listSchedulableAccountsForPlatform(ctx, groupID, platform)
+}
+
+func (s *OpenAIGatewayService) listSchedulableAccountsForPlatform(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
 	if s.schedulerSnapshot != nil {
 		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, false)
 		return accounts, err
@@ -2452,6 +2456,10 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImagesPlatform(
 	excludedIDs map[int64]struct{},
 	requiredCapability OpenAIImagesCapability,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	if strings.TrimSpace(platform) == PlatformQwen {
+		return s.selectAccountWithSchedulerForQwenImages(ctx, groupID, sessionHash, requestedModel, excludedIDs, requiredCapability)
+	}
+
 	normalizedPlatform := normalizeOpenAICompatiblePlatform(platform)
 	selection, decision, err := s.selectAccountWithScheduler(
 		ctx,
@@ -2485,6 +2493,165 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImagesPlatform(
 		)
 	}
 	return selection, decision, err
+}
+
+func (s *OpenAIGatewayService) selectAccountWithSchedulerForQwenImages(
+	ctx context.Context,
+	groupID *int64,
+	sessionHash string,
+	requestedModel string,
+	excludedIDs map[int64]struct{},
+	requiredCapability OpenAIImagesCapability,
+) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	decision := OpenAIAccountScheduleDecision{
+		Layer: openAIAccountScheduleLayerLoadBalance,
+	}
+	selection, err := s.selectAccountWithLoadAwarenessForQwenImages(ctx, groupID, sessionHash, requestedModel, excludedIDs, requiredCapability)
+	if err != nil {
+		return nil, decision, err
+	}
+	if selection != nil && selection.Account != nil {
+		decision.SelectedAccountID = selection.Account.ID
+		decision.SelectedAccountType = selection.Account.Type
+	}
+	return selection, decision, nil
+}
+
+func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessForQwenImages(
+	ctx context.Context,
+	groupID *int64,
+	sessionHash string,
+	requestedModel string,
+	excludedIDs map[int64]struct{},
+	requiredCapability OpenAIImagesCapability,
+) (*AccountSelectionResult, error) {
+	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
+		slog.Warn("channel pricing restriction blocked qwen image request",
+			"group_id", derefGroupID(groupID),
+			"model", requestedModel)
+		return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
+	}
+
+	cfg := s.schedulingConfig()
+	isExcluded := func(accountID int64) bool {
+		if excludedIDs == nil {
+			return false
+		}
+		_, excluded := excludedIDs[accountID]
+		return excluded
+	}
+
+	if sessionHash != "" && s.cache != nil {
+		if accountID, err := s.getStickySessionAccountID(ctx, groupID, sessionHash); err == nil && accountID > 0 && !isExcluded(accountID) {
+			account, err := s.getSchedulableAccount(ctx, accountID)
+			if err == nil && qwenImageAccountEligible(ctx, account, requestedModel, requiredCapability) && openAIStickyAccountMatchesGroup(account, groupID) {
+				result, acquireErr := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+				if acquireErr != nil {
+					return nil, acquireErr
+				}
+				if result != nil && result.Acquired {
+					selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc)
+					if selectErr != nil {
+						return nil, selectErr
+					}
+					_ = s.refreshStickySessionTTL(ctx, groupID, sessionHash, openaiStickySessionTTL)
+					return selection, nil
+				}
+				if s.concurrencyService != nil {
+					waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, account.ID)
+					if waitingCount < cfg.StickySessionMaxWaiting {
+						return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
+							AccountID:      account.ID,
+							MaxConcurrency: account.Concurrency,
+							Timeout:        cfg.StickySessionWaitTimeout,
+							MaxWaiting:     cfg.StickySessionMaxWaiting,
+						})
+					}
+				}
+			} else {
+				_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+			}
+		}
+	}
+
+	accounts, err := s.listSchedulableAccountsForPlatform(ctx, groupID, PlatformQwen)
+	if err != nil {
+		return nil, err
+	}
+	candidates := make([]*Account, 0, len(accounts))
+	for i := range accounts {
+		account := &accounts[i]
+		if isExcluded(account.ID) || !qwenImageAccountEligible(ctx, account, requestedModel, requiredCapability) {
+			continue
+		}
+		candidates = append(candidates, account)
+	}
+	if len(candidates) == 0 {
+		return nil, noAvailableOpenAISelectionError(requestedModel, false)
+	}
+
+	sortAccountsByPriorityAndLastUsed(candidates, false)
+	for _, account := range candidates {
+		fresh := account
+		if s.schedulerSnapshot != nil {
+			current, err := s.getSchedulableAccount(ctx, account.ID)
+			if err != nil || !qwenImageAccountEligible(ctx, current, requestedModel, requiredCapability) || !openAIStickyAccountMatchesGroup(current, groupID) {
+				continue
+			}
+			fresh = current
+		}
+		if s.accountRepo != nil {
+			latest, err := s.accountRepo.GetByID(ctx, fresh.ID)
+			if err == nil && latest != nil {
+				if !qwenImageAccountEligible(ctx, latest, requestedModel, requiredCapability) || !openAIStickyAccountMatchesGroup(latest, groupID) {
+					continue
+				}
+				fresh = latest
+			}
+		}
+		result, acquireErr := s.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
+		if acquireErr != nil {
+			return nil, acquireErr
+		}
+		if result != nil && result.Acquired {
+			selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result.ReleaseFunc)
+			if selectErr != nil {
+				return nil, selectErr
+			}
+			if sessionHash != "" {
+				_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
+			}
+			return selection, nil
+		}
+		if s.concurrencyService != nil {
+			return s.newSelectionResult(ctx, fresh, false, nil, &AccountWaitPlan{
+				AccountID:      fresh.ID,
+				MaxConcurrency: fresh.Concurrency,
+				Timeout:        cfg.FallbackWaitTimeout,
+				MaxWaiting:     cfg.FallbackMaxWaiting,
+			})
+		}
+	}
+
+	return nil, noAvailableOpenAISelectionError(requestedModel, false)
+}
+
+func qwenImageAccountEligible(ctx context.Context, account *Account, requestedModel string, requiredCapability OpenAIImagesCapability) bool {
+	if account == nil || account.Platform != PlatformQwen || account.Type != AccountTypeAPIKey {
+		return false
+	}
+	if !account.IsSchedulableForModelWithContext(ctx, requestedModel) {
+		return false
+	}
+	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
+		return false
+	}
+	switch requiredCapability {
+	case "", OpenAIImagesCapabilityNative:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool {
