@@ -25,6 +25,10 @@
     <path stroke-linecap="round" stroke-linejoin="round" d="M8 5h11v11" />
     <path stroke-linecap="round" stroke-linejoin="round" d="M5 6l13 13" />
   </svg>
+  <!-- Qwen logo mark -->
+  <svg v-else-if="platform === 'qwen'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 3.2a6.8 6.8 0 0 1 5.88 10.22l1.42 1.42-1.98 1.98-1.45-1.45A6.8 6.8 0 1 1 12 5.2Zm0 2.6a4.2 4.2 0 1 0 0 8.4 4.2 4.2 0 0 0 0-8.4Z" />
+  </svg>
   <!-- Fallback: generic platform icon -->
   <svg v-else :class="sizeClass" fill="currentColor" viewBox="0 0 24 24">
     <path
