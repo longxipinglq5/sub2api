@@ -106,6 +106,18 @@ func (s *authRepoStub) ListKeysByGroupID(ctx context.Context, groupID int64) ([]
 	return s.listKeysByGroupID(ctx, groupID)
 }
 
+func (s *authRepoStub) SetGroupIDs(ctx context.Context, apiKeyID int64, groupIDs []int64) error {
+	panic("unexpected SetGroupIDs call")
+}
+
+func (s *authRepoStub) ListGroupIDs(ctx context.Context, apiKeyID int64) ([]int64, error) {
+	panic("unexpected ListGroupIDs call")
+}
+
+func (s *authRepoStub) ListKeysByAnyGroupID(ctx context.Context, groupID int64) ([]string, error) {
+	panic("unexpected ListKeysByAnyGroupID call")
+}
+
 func (s *authRepoStub) IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error) {
 	panic("unexpected IncrementQuotaUsed call")
 }

@@ -115,7 +115,7 @@ func (_q *GroupQuery) QueryAPIKeyBindings() *APIKeyGroupBindingQuery {
 		step := sqlgraph.NewStep(
 			sqlgraph.From(group.Table, group.FieldID, selector),
 			sqlgraph.To(apikeygroupbinding.Table, apikeygroupbinding.FieldID),
-			sqlgraph.Edge(sqlgraph.O2M, false, group.APIKeyBindingsTable, group.APIKeyBindingsColumn),
+			sqlgraph.Edge(sqlgraph.O2M, true, group.APIKeyBindingsTable, group.APIKeyBindingsColumn),
 		)
 		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
 		return fromU, nil
@@ -803,7 +803,9 @@ func (_q *GroupQuery) loadAPIKeyBindings(ctx context.Context, query *APIKeyGroup
 			init(nodes[i])
 		}
 	}
-	query.withFKs = true
+	if len(query.ctx.Fields) > 0 {
+		query.ctx.AppendFieldOnce(apikeygroupbinding.FieldGroupID)
+	}
 	query.Where(predicate.APIKeyGroupBinding(func(s *sql.Selector) {
 		s.Where(sql.InValues(s.C(group.APIKeyBindingsColumn), fks...))
 	}))
@@ -812,13 +814,10 @@ func (_q *GroupQuery) loadAPIKeyBindings(ctx context.Context, query *APIKeyGroup
 		return err
 	}
 	for _, n := range neighbors {
-		fk := n.group_api_key_bindings
-		if fk == nil {
-			return fmt.Errorf(`foreign-key "group_api_key_bindings" is nil for node %v`, n.ID)
-		}
-		node, ok := nodeids[*fk]
+		fk := n.GroupID
+		node, ok := nodeids[fk]
 		if !ok {
-			return fmt.Errorf(`unexpected referenced foreign-key "group_api_key_bindings" returned %v for node %v`, *fk, n.ID)
+			return fmt.Errorf(`unexpected referenced foreign-key "group_id" returned %v for node %v`, fk, n.ID)
 		}
 		assign(node, n)
 	}

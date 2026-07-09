@@ -653,7 +653,7 @@ func (c *APIKeyClient) QueryGroupBindings(_m *APIKey) *APIKeyGroupBindingQuery {
 		step := sqlgraph.NewStep(
 			sqlgraph.From(apikey.Table, apikey.FieldID, id),
 			sqlgraph.To(apikeygroupbinding.Table, apikeygroupbinding.FieldID),
-			sqlgraph.Edge(sqlgraph.O2M, false, apikey.GroupBindingsTable, apikey.GroupBindingsColumn),
+			sqlgraph.Edge(sqlgraph.O2M, true, apikey.GroupBindingsTable, apikey.GroupBindingsColumn),
 		)
 		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
 		return fromV, nil
@@ -2721,7 +2721,7 @@ func (c *GroupClient) QueryAPIKeyBindings(_m *Group) *APIKeyGroupBindingQuery {
 		step := sqlgraph.NewStep(
 			sqlgraph.From(group.Table, group.FieldID, id),
 			sqlgraph.To(apikeygroupbinding.Table, apikeygroupbinding.FieldID),
-			sqlgraph.Edge(sqlgraph.O2M, false, group.APIKeyBindingsTable, group.APIKeyBindingsColumn),
+			sqlgraph.Edge(sqlgraph.O2M, true, group.APIKeyBindingsTable, group.APIKeyBindingsColumn),
 		)
 		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
 		return fromV, nil

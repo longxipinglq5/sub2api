@@ -1024,7 +1024,7 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if nodes := _c.mutation.APIKeyBindingsIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.O2M,
-			Inverse: false,
+			Inverse: true,
 			Table:   group.APIKeyBindingsTable,
 			Columns: []string{group.APIKeyBindingsColumn},
 			Bidi:    false,

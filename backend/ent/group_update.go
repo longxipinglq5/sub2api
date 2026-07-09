@@ -1220,7 +1220,7 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.APIKeyBindingsCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.O2M,
-			Inverse: false,
+			Inverse: true,
 			Table:   group.APIKeyBindingsTable,
 			Columns: []string{group.APIKeyBindingsColumn},
 			Bidi:    false,
@@ -1233,7 +1233,7 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if nodes := _u.mutation.RemovedAPIKeyBindingsIDs(); len(nodes) > 0 && !_u.mutation.APIKeyBindingsCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.O2M,
-			Inverse: false,
+			Inverse: true,
 			Table:   group.APIKeyBindingsTable,
 			Columns: []string{group.APIKeyBindingsColumn},
 			Bidi:    false,
@@ -1249,7 +1249,7 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if nodes := _u.mutation.APIKeyBindingsIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.O2M,
-			Inverse: false,
+			Inverse: true,
 			Table:   group.APIKeyBindingsTable,
 			Columns: []string{group.APIKeyBindingsColumn},
 			Bidi:    false,
@@ -2744,7 +2744,7 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	if _u.mutation.APIKeyBindingsCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.O2M,
-			Inverse: false,
+			Inverse: true,
 			Table:   group.APIKeyBindingsTable,
 			Columns: []string{group.APIKeyBindingsColumn},
 			Bidi:    false,
@@ -2757,7 +2757,7 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	if nodes := _u.mutation.RemovedAPIKeyBindingsIDs(); len(nodes) > 0 && !_u.mutation.APIKeyBindingsCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.O2M,
-			Inverse: false,
+			Inverse: true,
 			Table:   group.APIKeyBindingsTable,
 			Columns: []string{group.APIKeyBindingsColumn},
 			Bidi:    false,
@@ -2773,7 +2773,7 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	if nodes := _u.mutation.APIKeyBindingsIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.O2M,
-			Inverse: false,
+			Inverse: true,
 			Table:   group.APIKeyBindingsTable,
 			Columns: []string{group.APIKeyBindingsColumn},
 			Bidi:    false,

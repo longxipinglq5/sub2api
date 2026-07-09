@@ -98,10 +98,8 @@ var (
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "priority", Type: field.TypeInt, Default: 100},
 		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "api_key_group_bindings", Type: field.TypeInt64, Nullable: true},
 		{Name: "api_key_id", Type: field.TypeInt64},
 		{Name: "group_id", Type: field.TypeInt64},
-		{Name: "group_api_key_bindings", Type: field.TypeInt64, Nullable: true},
 	}
 	// APIKeyGroupsTable holds the schema information for the "api_key_groups" table.
 	APIKeyGroupsTable = &schema.Table{
@@ -110,45 +108,33 @@ var (
 		PrimaryKey: []*schema.Column{APIKeyGroupsColumns[0]},
 		ForeignKeys: []*schema.ForeignKey{
 			{
-				Symbol:     "api_key_groups_api_keys_group_bindings",
-				Columns:    []*schema.Column{APIKeyGroupsColumns[3]},
-				RefColumns: []*schema.Column{APIKeysColumns[0]},
-				OnDelete:   schema.SetNull,
-			},
-			{
 				Symbol:     "api_key_groups_api_keys_api_key",
-				Columns:    []*schema.Column{APIKeyGroupsColumns[4]},
+				Columns:    []*schema.Column{APIKeyGroupsColumns[3]},
 				RefColumns: []*schema.Column{APIKeysColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 			{
 				Symbol:     "api_key_groups_groups_group",
-				Columns:    []*schema.Column{APIKeyGroupsColumns[5]},
+				Columns:    []*schema.Column{APIKeyGroupsColumns[4]},
 				RefColumns: []*schema.Column{GroupsColumns[0]},
 				OnDelete:   schema.NoAction,
-			},
-			{
-				Symbol:     "api_key_groups_groups_api_key_bindings",
-				Columns:    []*schema.Column{APIKeyGroupsColumns[6]},
-				RefColumns: []*schema.Column{GroupsColumns[0]},
-				OnDelete:   schema.SetNull,
 			},
 		},
 		Indexes: []*schema.Index{
 			{
 				Name:    "apikeygroupbinding_group_id",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeyGroupsColumns[5]},
+				Columns: []*schema.Column{APIKeyGroupsColumns[4]},
 			},
 			{
 				Name:    "apikeygroupbinding_api_key_id_priority_group_id",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeyGroupsColumns[4], APIKeyGroupsColumns[1], APIKeyGroupsColumns[5]},
+				Columns: []*schema.Column{APIKeyGroupsColumns[3], APIKeyGroupsColumns[1], APIKeyGroupsColumns[4]},
 			},
 			{
 				Name:    "apikeygroupbinding_api_key_id_group_id",
 				Unique:  true,
-				Columns: []*schema.Column{APIKeyGroupsColumns[4], APIKeyGroupsColumns[5]},
+				Columns: []*schema.Column{APIKeyGroupsColumns[3], APIKeyGroupsColumns[4]},
 			},
 		},
 	}
@@ -1880,9 +1866,7 @@ func init() {
 		Table: "api_keys",
 	}
 	APIKeyGroupsTable.ForeignKeys[0].RefTable = APIKeysTable
-	APIKeyGroupsTable.ForeignKeys[1].RefTable = APIKeysTable
-	APIKeyGroupsTable.ForeignKeys[2].RefTable = GroupsTable
-	APIKeyGroupsTable.ForeignKeys[3].RefTable = GroupsTable
+	APIKeyGroupsTable.ForeignKeys[1].RefTable = GroupsTable
 	APIKeyGroupsTable.Annotation = &entsql.Annotation{
 		Table: "api_key_groups",
 	}

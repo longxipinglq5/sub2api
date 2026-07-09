@@ -27,7 +27,6 @@ type APIKeyGroupBindingQuery struct {
 	predicates []predicate.APIKeyGroupBinding
 	withAPIKey *APIKeyQuery
 	withGroup  *GroupQuery
-	withFKs    bool
 	modifiers  []func(*sql.Selector)
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
@@ -408,16 +407,12 @@ func (_q *APIKeyGroupBindingQuery) prepareQuery(ctx context.Context) error {
 func (_q *APIKeyGroupBindingQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*APIKeyGroupBinding, error) {
 	var (
 		nodes       = []*APIKeyGroupBinding{}
-		withFKs     = _q.withFKs
 		_spec       = _q.querySpec()
 		loadedTypes = [2]bool{
 			_q.withAPIKey != nil,
 			_q.withGroup != nil,
 		}
 	)
-	if withFKs {
-		_spec.Node.Columns = append(_spec.Node.Columns, apikeygroupbinding.ForeignKeys...)
-	}
 	_spec.ScanValues = func(columns []string) ([]any, error) {
 		return (*APIKeyGroupBinding).scanValues(nil, columns)
 	}

@@ -1468,7 +1468,7 @@ func HasAPIKeyBindings() predicate.Group {
 	return predicate.Group(func(s *sql.Selector) {
 		step := sqlgraph.NewStep(
 			sqlgraph.From(Table, FieldID),
-			sqlgraph.Edge(sqlgraph.O2M, false, APIKeyBindingsTable, APIKeyBindingsColumn),
+			sqlgraph.Edge(sqlgraph.O2M, true, APIKeyBindingsTable, APIKeyBindingsColumn),
 		)
 		sqlgraph.HasNeighbors(s, step)
 	})

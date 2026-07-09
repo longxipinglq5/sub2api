@@ -29,10 +29,8 @@ type APIKeyGroupBinding struct {
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the APIKeyGroupBindingQuery when eager-loading is set.
-	Edges                  APIKeyGroupBindingEdges `json:"edges"`
-	api_key_group_bindings *int64
-	group_api_key_bindings *int64
-	selectValues           sql.SelectValues
+	Edges        APIKeyGroupBindingEdges `json:"edges"`
+	selectValues sql.SelectValues
 }
 
 // APIKeyGroupBindingEdges holds the relations/edges for other nodes in the graph.
@@ -77,10 +75,6 @@ func (*APIKeyGroupBinding) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullInt64)
 		case apikeygroupbinding.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
-		case apikeygroupbinding.ForeignKeys[0]: // api_key_group_bindings
-			values[i] = new(sql.NullInt64)
-		case apikeygroupbinding.ForeignKeys[1]: // group_api_key_bindings
-			values[i] = new(sql.NullInt64)
 		default:
 			values[i] = new(sql.UnknownType)
 		}
@@ -125,20 +119,6 @@ func (_m *APIKeyGroupBinding) assignValues(columns []string, values []any) error
 				return fmt.Errorf("unexpected type %T for field created_at", values[i])
 			} else if value.Valid {
 				_m.CreatedAt = value.Time
-			}
-		case apikeygroupbinding.ForeignKeys[0]:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for edge-field api_key_group_bindings", value)
-			} else if value.Valid {
-				_m.api_key_group_bindings = new(int64)
-				*_m.api_key_group_bindings = int64(value.Int64)
-			}
-		case apikeygroupbinding.ForeignKeys[1]:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for edge-field group_api_key_bindings", value)
-			} else if value.Valid {
-				_m.group_api_key_bindings = new(int64)
-				*_m.group_api_key_bindings = int64(value.Int64)
 			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])

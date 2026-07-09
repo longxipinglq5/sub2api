@@ -119,7 +119,7 @@ const (
 	// It exists in this package in order to avoid circular dependency with the "apikeygroupbinding" package.
 	APIKeyBindingsInverseTable = "api_key_groups"
 	// APIKeyBindingsColumn is the table column denoting the api_key_bindings relation/edge.
-	APIKeyBindingsColumn = "group_api_key_bindings"
+	APIKeyBindingsColumn = "group_id"
 	// RedeemCodesTable is the table that holds the redeem_codes relation/edge.
 	RedeemCodesTable = "redeem_codes"
 	// RedeemCodesInverseTable is the table name for the RedeemCode entity.
@@ -593,7 +593,7 @@ func newAPIKeyBindingsStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(APIKeyBindingsInverseTable, FieldID),
-		sqlgraph.Edge(sqlgraph.O2M, false, APIKeyBindingsTable, APIKeyBindingsColumn),
+		sqlgraph.Edge(sqlgraph.O2M, true, APIKeyBindingsTable, APIKeyBindingsColumn),
 	)
 }
 func newRedeemCodesStep() *sqlgraph.Step {

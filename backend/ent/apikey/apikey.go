@@ -91,7 +91,7 @@ const (
 	// It exists in this package in order to avoid circular dependency with the "apikeygroupbinding" package.
 	GroupBindingsInverseTable = "api_key_groups"
 	// GroupBindingsColumn is the table column denoting the group_bindings relation/edge.
-	GroupBindingsColumn = "api_key_group_bindings"
+	GroupBindingsColumn = "api_key_id"
 	// UsageLogsTable is the table that holds the usage_logs relation/edge.
 	UsageLogsTable = "usage_logs"
 	// UsageLogsInverseTable is the table name for the UsageLog entity.
@@ -351,7 +351,7 @@ func newGroupBindingsStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(GroupBindingsInverseTable, FieldID),
-		sqlgraph.Edge(sqlgraph.O2M, false, GroupBindingsTable, GroupBindingsColumn),
+		sqlgraph.Edge(sqlgraph.O2M, true, GroupBindingsTable, GroupBindingsColumn),
 	)
 }
 func newUsageLogsStep() *sqlgraph.Step {
