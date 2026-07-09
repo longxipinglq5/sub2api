@@ -65,6 +65,8 @@ const (
 	EdgeUser = "user"
 	// EdgeGroup holds the string denoting the group edge name in mutations.
 	EdgeGroup = "group"
+	// EdgeGroupBindings holds the string denoting the group_bindings edge name in mutations.
+	EdgeGroupBindings = "group_bindings"
 	// EdgeUsageLogs holds the string denoting the usage_logs edge name in mutations.
 	EdgeUsageLogs = "usage_logs"
 	// Table holds the table name of the apikey in the database.
@@ -83,6 +85,13 @@ const (
 	GroupInverseTable = "groups"
 	// GroupColumn is the table column denoting the group relation/edge.
 	GroupColumn = "group_id"
+	// GroupBindingsTable is the table that holds the group_bindings relation/edge.
+	GroupBindingsTable = "api_key_groups"
+	// GroupBindingsInverseTable is the table name for the APIKeyGroupBinding entity.
+	// It exists in this package in order to avoid circular dependency with the "apikeygroupbinding" package.
+	GroupBindingsInverseTable = "api_key_groups"
+	// GroupBindingsColumn is the table column denoting the group_bindings relation/edge.
+	GroupBindingsColumn = "api_key_group_bindings"
 	// UsageLogsTable is the table that holds the usage_logs relation/edge.
 	UsageLogsTable = "usage_logs"
 	// UsageLogsInverseTable is the table name for the UsageLog entity.
@@ -297,6 +306,20 @@ func ByGroupField(field string, opts ...sql.OrderTermOption) OrderOption {
 	}
 }
 
+// ByGroupBindingsCount orders the results by group_bindings count.
+func ByGroupBindingsCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newGroupBindingsStep(), opts...)
+	}
+}
+
+// ByGroupBindings orders the results by group_bindings terms.
+func ByGroupBindings(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newGroupBindingsStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
 // ByUsageLogsCount orders the results by usage_logs count.
 func ByUsageLogsCount(opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
@@ -322,6 +345,13 @@ func newGroupStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(GroupInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.M2O, true, GroupTable, GroupColumn),
+	)
+}
+func newGroupBindingsStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(GroupBindingsInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, GroupBindingsTable, GroupBindingsColumn),
 	)
 }
 func newUsageLogsStep() *sqlgraph.Step {

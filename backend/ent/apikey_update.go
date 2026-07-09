@@ -13,6 +13,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
+	"github.com/Wei-Shaw/sub2api/ent/apikeygroupbinding"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
@@ -448,6 +449,21 @@ func (_u *APIKeyUpdate) SetGroup(v *Group) *APIKeyUpdate {
 	return _u.SetGroupID(v.ID)
 }
 
+// AddGroupBindingIDs adds the "group_bindings" edge to the APIKeyGroupBinding entity by IDs.
+func (_u *APIKeyUpdate) AddGroupBindingIDs(ids ...int64) *APIKeyUpdate {
+	_u.mutation.AddGroupBindingIDs(ids...)
+	return _u
+}
+
+// AddGroupBindings adds the "group_bindings" edges to the APIKeyGroupBinding entity.
+func (_u *APIKeyUpdate) AddGroupBindings(v ...*APIKeyGroupBinding) *APIKeyUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddGroupBindingIDs(ids...)
+}
+
 // AddUsageLogIDs adds the "usage_logs" edge to the UsageLog entity by IDs.
 func (_u *APIKeyUpdate) AddUsageLogIDs(ids ...int64) *APIKeyUpdate {
 	_u.mutation.AddUsageLogIDs(ids...)
@@ -478,6 +494,27 @@ func (_u *APIKeyUpdate) ClearUser() *APIKeyUpdate {
 func (_u *APIKeyUpdate) ClearGroup() *APIKeyUpdate {
 	_u.mutation.ClearGroup()
 	return _u
+}
+
+// ClearGroupBindings clears all "group_bindings" edges to the APIKeyGroupBinding entity.
+func (_u *APIKeyUpdate) ClearGroupBindings() *APIKeyUpdate {
+	_u.mutation.ClearGroupBindings()
+	return _u
+}
+
+// RemoveGroupBindingIDs removes the "group_bindings" edge to APIKeyGroupBinding entities by IDs.
+func (_u *APIKeyUpdate) RemoveGroupBindingIDs(ids ...int64) *APIKeyUpdate {
+	_u.mutation.RemoveGroupBindingIDs(ids...)
+	return _u
+}
+
+// RemoveGroupBindings removes "group_bindings" edges to APIKeyGroupBinding entities.
+func (_u *APIKeyUpdate) RemoveGroupBindings(v ...*APIKeyGroupBinding) *APIKeyUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveGroupBindingIDs(ids...)
 }
 
 // ClearUsageLogs clears all "usage_logs" edges to the UsageLog entity.
@@ -747,6 +784,51 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(group.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.GroupBindingsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   apikey.GroupBindingsTable,
+			Columns: []string{apikey.GroupBindingsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(apikeygroupbinding.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedGroupBindingsIDs(); len(nodes) > 0 && !_u.mutation.GroupBindingsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   apikey.GroupBindingsTable,
+			Columns: []string{apikey.GroupBindingsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(apikeygroupbinding.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.GroupBindingsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   apikey.GroupBindingsTable,
+			Columns: []string{apikey.GroupBindingsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(apikeygroupbinding.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
@@ -1235,6 +1317,21 @@ func (_u *APIKeyUpdateOne) SetGroup(v *Group) *APIKeyUpdateOne {
 	return _u.SetGroupID(v.ID)
 }
 
+// AddGroupBindingIDs adds the "group_bindings" edge to the APIKeyGroupBinding entity by IDs.
+func (_u *APIKeyUpdateOne) AddGroupBindingIDs(ids ...int64) *APIKeyUpdateOne {
+	_u.mutation.AddGroupBindingIDs(ids...)
+	return _u
+}
+
+// AddGroupBindings adds the "group_bindings" edges to the APIKeyGroupBinding entity.
+func (_u *APIKeyUpdateOne) AddGroupBindings(v ...*APIKeyGroupBinding) *APIKeyUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddGroupBindingIDs(ids...)
+}
+
 // AddUsageLogIDs adds the "usage_logs" edge to the UsageLog entity by IDs.
 func (_u *APIKeyUpdateOne) AddUsageLogIDs(ids ...int64) *APIKeyUpdateOne {
 	_u.mutation.AddUsageLogIDs(ids...)
@@ -1265,6 +1362,27 @@ func (_u *APIKeyUpdateOne) ClearUser() *APIKeyUpdateOne {
 func (_u *APIKeyUpdateOne) ClearGroup() *APIKeyUpdateOne {
 	_u.mutation.ClearGroup()
 	return _u
+}
+
+// ClearGroupBindings clears all "group_bindings" edges to the APIKeyGroupBinding entity.
+func (_u *APIKeyUpdateOne) ClearGroupBindings() *APIKeyUpdateOne {
+	_u.mutation.ClearGroupBindings()
+	return _u
+}
+
+// RemoveGroupBindingIDs removes the "group_bindings" edge to APIKeyGroupBinding entities by IDs.
+func (_u *APIKeyUpdateOne) RemoveGroupBindingIDs(ids ...int64) *APIKeyUpdateOne {
+	_u.mutation.RemoveGroupBindingIDs(ids...)
+	return _u
+}
+
+// RemoveGroupBindings removes "group_bindings" edges to APIKeyGroupBinding entities.
+func (_u *APIKeyUpdateOne) RemoveGroupBindings(v ...*APIKeyGroupBinding) *APIKeyUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveGroupBindingIDs(ids...)
 }
 
 // ClearUsageLogs clears all "usage_logs" edges to the UsageLog entity.
@@ -1564,6 +1682,51 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(group.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.GroupBindingsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   apikey.GroupBindingsTable,
+			Columns: []string{apikey.GroupBindingsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(apikeygroupbinding.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedGroupBindingsIDs(); len(nodes) > 0 && !_u.mutation.GroupBindingsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   apikey.GroupBindingsTable,
+			Columns: []string{apikey.GroupBindingsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(apikeygroupbinding.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.GroupBindingsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   apikey.GroupBindingsTable,
+			Columns: []string{apikey.GroupBindingsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(apikeygroupbinding.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
