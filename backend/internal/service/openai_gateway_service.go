@@ -476,6 +476,10 @@ func (s *OpenAIGatewayService) ResolveChannelMappingAndRestrict(ctx context.Cont
 	return s.channelService.ResolveChannelMappingAndRestrict(ctx, groupID, model)
 }
 
+func (s *OpenAIGatewayService) GroupSupportsModel(ctx context.Context, groupID int64, model string) (bool, error) {
+	return !s.checkChannelPricingRestriction(ctx, &groupID, model), nil
+}
+
 func (s *OpenAIGatewayService) isCodexImageGenerationBridgeEnabled(ctx context.Context, account *Account, apiKey *APIKey) bool {
 	if override := account.CodexImageGenerationBridgeOverride(); override != nil {
 		return *override
