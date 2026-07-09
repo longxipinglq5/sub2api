@@ -201,6 +201,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 		}).
 		WithGroupBindings(func(q *dbent.APIKeyGroupBindingQuery) {
 			q.Select(apikeygroupbinding.FieldGroupID, apikeygroupbinding.FieldPriority).
+				WithGroup().
 				Order(apikeygroupbinding.ByPriority(), apikeygroupbinding.ByGroupID())
 		}).
 		Only(ctx)

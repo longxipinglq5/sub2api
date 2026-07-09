@@ -311,6 +311,10 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesGroupIDs(t *testing.T) {
 			Balance:     10,
 			Concurrency: 3,
 		},
+		Groups: []Group{
+			{ID: 9, Name: "openai", Platform: PlatformOpenAI, Status: StatusActive, SubscriptionType: SubscriptionTypeStandard, RateMultiplier: 1},
+			{ID: 10, Name: "qwen", Platform: PlatformQwen, Status: StatusActive, SubscriptionType: SubscriptionTypeStandard, RateMultiplier: 2},
+		},
 	}
 
 	snapshot := svc.snapshotFromAPIKey(context.Background(), apiKey)
@@ -318,6 +322,10 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesGroupIDs(t *testing.T) {
 
 	require.NotNil(t, roundTrip)
 	require.Equal(t, []int64{9, 10}, roundTrip.GroupIDs)
+	require.Len(t, roundTrip.Groups, 2)
+	require.Equal(t, int64(10), roundTrip.Groups[1].ID)
+	require.Equal(t, PlatformQwen, roundTrip.Groups[1].Platform)
+	require.Equal(t, 2.0, roundTrip.Groups[1].RateMultiplier)
 }
 
 func TestAPIKeyService_GetByKey_IgnoresLegacyAuthCacheSnapshotWithoutMessagesDispatchConfig(t *testing.T) {
