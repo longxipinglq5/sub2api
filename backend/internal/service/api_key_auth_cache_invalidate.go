@@ -29,10 +29,13 @@ func (s *APIKeyService) InvalidateAuthCacheByGroupID(ctx context.Context, groupI
 		return
 	}
 	keys, err := s.apiKeyRepo.ListKeysByGroupID(ctx, groupID)
-	if err != nil {
-		return
+	if err == nil {
+		s.deleteAuthCacheByKeys(ctx, keys)
 	}
-	s.deleteAuthCacheByKeys(ctx, keys)
+	keys, err = s.apiKeyRepo.ListKeysByAnyGroupID(ctx, groupID)
+	if err == nil {
+		s.deleteAuthCacheByKeys(ctx, keys)
+	}
 }
 
 func (s *APIKeyService) deleteAuthCacheByKeys(ctx context.Context, keys []string) {
