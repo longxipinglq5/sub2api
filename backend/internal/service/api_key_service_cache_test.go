@@ -17,9 +17,10 @@ import (
 )
 
 type authRepoStub struct {
-	getByKeyForAuth   func(ctx context.Context, key string) (*APIKey, error)
-	listKeysByUserID  func(ctx context.Context, userID int64) ([]string, error)
-	listKeysByGroupID func(ctx context.Context, groupID int64) ([]string, error)
+	getByKeyForAuth      func(ctx context.Context, key string) (*APIKey, error)
+	listKeysByUserID     func(ctx context.Context, userID int64) ([]string, error)
+	listKeysByGroupID    func(ctx context.Context, groupID int64) ([]string, error)
+	listKeysByAnyGroupID func(ctx context.Context, groupID int64) ([]string, error)
 }
 
 func (s *authRepoStub) Create(ctx context.Context, key *APIKey) error {
@@ -104,6 +105,21 @@ func (s *authRepoStub) ListKeysByGroupID(ctx context.Context, groupID int64) ([]
 		panic("unexpected ListKeysByGroupID call")
 	}
 	return s.listKeysByGroupID(ctx, groupID)
+}
+
+func (s *authRepoStub) SetGroupIDs(ctx context.Context, apiKeyID int64, groupIDs []int64) error {
+	panic("unexpected SetGroupIDs call")
+}
+
+func (s *authRepoStub) ListGroupIDs(ctx context.Context, apiKeyID int64) ([]int64, error) {
+	panic("unexpected ListGroupIDs call")
+}
+
+func (s *authRepoStub) ListKeysByAnyGroupID(ctx context.Context, groupID int64) ([]string, error) {
+	if s.listKeysByAnyGroupID == nil {
+		panic("unexpected ListKeysByAnyGroupID call")
+	}
+	return s.listKeysByAnyGroupID(ctx, groupID)
 }
 
 func (s *authRepoStub) IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error) {
@@ -275,6 +291,41 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t 
 	require.Equal(t, apiKey.Name, roundTrip.Name)
 	require.NotNil(t, roundTrip.Group)
 	require.Equal(t, apiKey.Group.MessagesDispatchModelConfig, roundTrip.Group.MessagesDispatchModelConfig)
+}
+
+func TestAPIKeyService_SnapshotRoundTrip_PreservesGroupIDs(t *testing.T) {
+	svc := NewAPIKeyService(nil, nil, nil, nil, nil, nil, &config.Config{})
+	groupID := int64(9)
+	apiKey := &APIKey{
+		ID:       1,
+		UserID:   2,
+		GroupID:  &groupID,
+		GroupIDs: []int64{9, 10},
+		Key:      "k-groupids-roundtrip",
+		Name:     "Multi Group Key",
+		Status:   StatusActive,
+		User: &User{
+			ID:          2,
+			Status:      StatusActive,
+			Role:        RoleUser,
+			Balance:     10,
+			Concurrency: 3,
+		},
+		Groups: []Group{
+			{ID: 9, Name: "openai", Platform: PlatformOpenAI, Status: StatusActive, SubscriptionType: SubscriptionTypeStandard, RateMultiplier: 1},
+			{ID: 10, Name: "qwen", Platform: PlatformQwen, Status: StatusActive, SubscriptionType: SubscriptionTypeStandard, RateMultiplier: 2},
+		},
+	}
+
+	snapshot := svc.snapshotFromAPIKey(context.Background(), apiKey)
+	roundTrip := svc.snapshotToAPIKey(apiKey.Key, snapshot)
+
+	require.NotNil(t, roundTrip)
+	require.Equal(t, []int64{9, 10}, roundTrip.GroupIDs)
+	require.Len(t, roundTrip.Groups, 2)
+	require.Equal(t, int64(10), roundTrip.Groups[1].ID)
+	require.Equal(t, PlatformQwen, roundTrip.Groups[1].Platform)
+	require.Equal(t, 2.0, roundTrip.Groups[1].RateMultiplier)
 }
 
 func TestAPIKeyService_GetByKey_IgnoresLegacyAuthCacheSnapshotWithoutMessagesDispatchConfig(t *testing.T) {
@@ -478,6 +529,9 @@ func TestAPIKeyService_InvalidateAuthCacheByGroupID(t *testing.T) {
 		listKeysByGroupID: func(ctx context.Context, groupID int64) ([]string, error) {
 			return []string{"k1", "k2"}, nil
 		},
+		listKeysByAnyGroupID: func(ctx context.Context, groupID int64) ([]string, error) {
+			return []string{"k3"}, nil
+		},
 	}
 	cfg := &config.Config{
 		APIKeyAuth: config.APIKeyAuthCacheConfig{
@@ -487,7 +541,7 @@ func TestAPIKeyService_InvalidateAuthCacheByGroupID(t *testing.T) {
 	svc := NewAPIKeyService(repo, nil, nil, nil, nil, cache, cfg)
 
 	svc.InvalidateAuthCacheByGroupID(context.Background(), 9)
-	require.Len(t, cache.deleteAuthKeys, 2)
+	require.Len(t, cache.deleteAuthKeys, 3)
 }
 
 func TestAPIKeyService_InvalidateAuthCacheByKey(t *testing.T) {

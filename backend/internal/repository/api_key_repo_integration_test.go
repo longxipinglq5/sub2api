@@ -279,6 +279,45 @@ func (s *APIKeyRepoSuite) TestCountByGroupID() {
 	s.Require().Equal(int64(1), count)
 }
 
+func (s *APIKeyRepoSuite) TestSetAndListGroupIDs() {
+	user := s.mustCreateUser("keygroups@test.com")
+	group1 := s.mustCreateGroup("g-keygroups-1")
+	group2 := s.mustCreateGroup("g-keygroups-2")
+	key := s.mustCreateApiKey(user.ID, "sk-keygroups", "Key Groups", nil)
+
+	s.Require().NoError(s.repo.SetGroupIDs(s.ctx, key.ID, []int64{group1.ID, group2.ID}))
+
+	got, err := s.repo.ListGroupIDs(s.ctx, key.ID)
+	s.Require().NoError(err)
+	s.Require().Equal([]int64{group1.ID, group2.ID}, got)
+
+	s.Require().NoError(s.repo.SetGroupIDs(s.ctx, key.ID, []int64{group2.ID, group1.ID, group2.ID, 0, -1}))
+
+	got, err = s.repo.ListGroupIDs(s.ctx, key.ID)
+	s.Require().NoError(err)
+	s.Require().Equal([]int64{group2.ID, group1.ID}, got)
+}
+
+func (s *APIKeyRepoSuite) TestListKeysByAnyGroupID() {
+	user := s.mustCreateUser("keysbyanygroup@test.com")
+	group := s.mustCreateGroup("g-keysbyanygroup")
+	otherGroup := s.mustCreateGroup("g-keysbyanygroup-other")
+	boundKey := s.mustCreateApiKey(user.ID, "sk-bound-by-any-group", "Bound", nil)
+	legacyKey := s.mustCreateApiKey(user.ID, "sk-legacy-group", "Legacy", &group.ID)
+	s.mustCreateApiKey(user.ID, "sk-other-bound", "Other", &otherGroup.ID)
+
+	s.Require().NoError(s.repo.SetGroupIDs(s.ctx, boundKey.ID, []int64{group.ID}))
+
+	keys, err := s.repo.ListKeysByAnyGroupID(s.ctx, group.ID)
+	s.Require().NoError(err)
+	s.Require().ElementsMatch([]string{boundKey.Key, legacyKey.Key}, keys)
+
+	s.Require().NoError(s.repo.Delete(s.ctx, boundKey.ID))
+	keys, err = s.repo.ListKeysByAnyGroupID(s.ctx, group.ID)
+	s.Require().NoError(err)
+	s.Require().ElementsMatch([]string{legacyKey.Key}, keys)
+}
+
 // --- ExistsByKey ---
 
 func (s *APIKeyRepoSuite) TestExistsByKey() {
