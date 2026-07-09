@@ -38,3 +38,26 @@ func TestAPIKeyFromService_MapsNilLastUsedAt(t *testing.T) {
 	require.NotNil(t, out)
 	require.Nil(t, out.LastUsedAt)
 }
+
+func TestAPIKeyFromService_MapsGroupIDsAndGroups(t *testing.T) {
+	src := &service.APIKey{
+		ID:       1,
+		UserID:   2,
+		Key:      "sk-map-groups",
+		Name:     "MapperGroups",
+		Status:   service.StatusActive,
+		GroupIDs: []int64{10, 20},
+		Groups: []service.Group{
+			{ID: 10, Name: "openai", Platform: service.PlatformOpenAI},
+			{ID: 20, Name: "qwen", Platform: service.PlatformQwen},
+		},
+	}
+
+	out := APIKeyFromService(src)
+
+	require.NotNil(t, out)
+	require.Equal(t, []int64{10, 20}, out.GroupIDs)
+	require.Len(t, out.Groups, 2)
+	require.Equal(t, int64(20), out.Groups[1].ID)
+	require.Equal(t, service.PlatformQwen, out.Groups[1].Platform)
+}

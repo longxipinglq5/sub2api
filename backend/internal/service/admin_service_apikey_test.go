@@ -112,10 +112,17 @@ func (s *userRepoStubForGroupUpdate) RemoveGroupFromUserAllowedGroups(context.Co
 
 // apiKeyRepoStubForGroupUpdate implements APIKeyRepository for AdminUpdateAPIKeyGroupID tests.
 type apiKeyRepoStubForGroupUpdate struct {
-	key       *APIKey
-	getErr    error
-	updateErr error
-	updated   *APIKey // captures what was passed to Update
+	key              *APIKey
+	getErr           error
+	updateErr        error
+	setGroupIDsErr   error
+	updated          *APIKey // captures what was passed to Update
+	setGroupIDsCalls []setGroupIDsCallForGroupUpdate
+}
+
+type setGroupIDsCallForGroupUpdate struct {
+	apiKeyID int64
+	groupIDs []int64
 }
 
 func (s *apiKeyRepoStubForGroupUpdate) GetByID(_ context.Context, _ int64) (*APIKey, error) {
@@ -179,8 +186,12 @@ func (s *apiKeyRepoStubForGroupUpdate) ListKeysByUserID(context.Context, int64) 
 func (s *apiKeyRepoStubForGroupUpdate) ListKeysByGroupID(context.Context, int64) ([]string, error) {
 	panic("unexpected")
 }
-func (s *apiKeyRepoStubForGroupUpdate) SetGroupIDs(context.Context, int64, []int64) error {
-	panic("unexpected")
+func (s *apiKeyRepoStubForGroupUpdate) SetGroupIDs(_ context.Context, apiKeyID int64, groupIDs []int64) error {
+	s.setGroupIDsCalls = append(s.setGroupIDsCalls, setGroupIDsCallForGroupUpdate{
+		apiKeyID: apiKeyID,
+		groupIDs: append([]int64(nil), groupIDs...),
+	})
+	return s.setGroupIDsErr
 }
 func (s *apiKeyRepoStubForGroupUpdate) ListGroupIDs(context.Context, int64) ([]int64, error) {
 	panic("unexpected")
