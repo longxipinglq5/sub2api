@@ -19,6 +19,7 @@ const (
 	dashScopeDefaultPollInterval  = 1000 * time.Millisecond
 	dashScopeDefaultPollTimeout   = 120 * time.Second
 	dashScopeImageSynthesisPath   = "/services/aigc/text2image/image-synthesis"
+	dashScopeImageGenerationPath  = "/services/aigc/image-generation/generation"
 	dashScopeTaskStatusPathPrefix = "/tasks/"
 )
 
@@ -30,6 +31,30 @@ type dashScopeImageSubmitRequest struct {
 
 type dashScopeImagePromptInput struct {
 	Prompt string `json:"prompt"`
+}
+
+type dashScopeImageGenerationSubmitRequest struct {
+	Model      string                                `json:"model"`
+	Input      dashScopeImageGenerationPromptInput   `json:"input"`
+	Parameters dashScopeImageGenerationTaskParameter `json:"parameters"`
+}
+
+type dashScopeImageGenerationPromptInput struct {
+	Messages []dashScopeImageGenerationMessage `json:"messages"`
+}
+
+type dashScopeImageGenerationMessage struct {
+	Role    string                                 `json:"role"`
+	Content []dashScopeImageGenerationContentBlock `json:"content"`
+}
+
+type dashScopeImageGenerationContentBlock struct {
+	Text string `json:"text"`
+}
+
+type dashScopeImageGenerationTaskParameter struct {
+	Size string `json:"size"`
+	N    int    `json:"n"`
 }
 
 type dashScopeImageTaskParameter struct {
@@ -49,6 +74,13 @@ type dashScopeImageTaskResponse struct {
 		Results    []struct {
 			URL string `json:"url"`
 		} `json:"results"`
+		Choices []struct {
+			Message struct {
+				Content []struct {
+					Image string `json:"image"`
+				} `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
 	} `json:"output"`
 }
 
@@ -91,17 +123,8 @@ func (s *OpenAIGatewayService) forwardQwenWanxImages(
 		upstreamModel = requestModel
 	}
 
-	submitBody := dashScopeImageSubmitRequest{
-		Model: upstreamModel,
-		Input: dashScopeImagePromptInput{
-			Prompt: parsed.Prompt,
-		},
-		Parameters: dashScopeImageTaskParameter{
-			Size: parsed.Size,
-			N:    parsed.N,
-		},
-	}
-	resp, respBody, err := dashScopeDoJSON(ctx, http.MethodPost, buildDashScopeURL(baseURL, dashScopeImageSynthesisPath), apiKey, submitBody)
+	submitPath, submitBody := buildDashScopeImageSubmitPayload(upstreamModel, parsed)
+	resp, respBody, err := dashScopeDoJSON(ctx, http.MethodPost, buildDashScopeURL(baseURL, submitPath), apiKey, submitBody)
 	if err != nil {
 		return nil, err
 	}
@@ -155,12 +178,7 @@ func (s *OpenAIGatewayService) forwardQwenWanxImages(
 
 		switch strings.ToUpper(strings.TrimSpace(finalTask.Output.TaskStatus)) {
 		case "SUCCEEDED":
-			urls := make([]string, 0, len(finalTask.Output.Results))
-			for _, item := range finalTask.Output.Results {
-				if trimmed := strings.TrimSpace(item.URL); trimmed != "" {
-					urls = append(urls, trimmed)
-				}
-			}
+			urls := dashScopeTaskImageURLs(finalTask)
 			if len(urls) == 0 {
 				return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, ResponseBody: pollBody}
 			}
@@ -207,6 +225,72 @@ func (s *OpenAIGatewayService) forwardQwenWanxImages(
 			}
 		case <-interval.C:
 		}
+	}
+}
+
+func dashScopeTaskImageURLs(task dashScopeImageTaskResponse) []string {
+	urls := make([]string, 0, len(task.Output.Results))
+	seen := make(map[string]struct{})
+	add := func(value string) {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return
+		}
+		if _, ok := seen[trimmed]; ok {
+			return
+		}
+		seen[trimmed] = struct{}{}
+		urls = append(urls, trimmed)
+	}
+	for _, item := range task.Output.Results {
+		add(item.URL)
+	}
+	for _, choice := range task.Output.Choices {
+		for _, content := range choice.Message.Content {
+			add(content.Image)
+		}
+	}
+	return urls
+}
+
+func buildDashScopeImageSubmitPayload(upstreamModel string, parsed *OpenAIImagesRequest) (string, any) {
+	if isDashScopeImageGenerationModel(upstreamModel) {
+		return dashScopeImageGenerationPath, dashScopeImageGenerationSubmitRequest{
+			Model: upstreamModel,
+			Input: dashScopeImageGenerationPromptInput{
+				Messages: []dashScopeImageGenerationMessage{
+					{
+						Role: "user",
+						Content: []dashScopeImageGenerationContentBlock{
+							{Text: parsed.Prompt},
+						},
+					},
+				},
+			},
+			Parameters: dashScopeImageGenerationTaskParameter{
+				Size: parsed.Size,
+				N:    parsed.N,
+			},
+		}
+	}
+	return dashScopeImageSynthesisPath, dashScopeImageSubmitRequest{
+		Model: upstreamModel,
+		Input: dashScopeImagePromptInput{
+			Prompt: parsed.Prompt,
+		},
+		Parameters: dashScopeImageTaskParameter{
+			Size: parsed.Size,
+			N:    parsed.N,
+		},
+	}
+}
+
+func isDashScopeImageGenerationModel(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "wan2.7-image", "wan2.7-image-pro", "wan2.6-t2i":
+		return true
+	default:
+		return false
 	}
 }
 

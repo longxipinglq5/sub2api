@@ -105,6 +105,172 @@ func TestForwardQwenWanxImages_SuccessURLCase(t *testing.T) {
 	require.Greater(t, result.Duration, time.Duration(0))
 }
 
+func TestForwardQwenWanxImages_Wan27UsesImageGenerationEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var submitPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost:
+			submitPath = r.URL.Path
+			require.Equal(t, "/services/aigc/image-generation/generation", r.URL.Path)
+			require.Equal(t, "Bearer dashscope-key", r.Header.Get("Authorization"))
+			require.Equal(t, "enable", r.Header.Get("X-DashScope-Async"))
+
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+			require.Equal(t, "wan2.7-image", gjson.GetBytes(body, "model").String())
+			require.Equal(t, "draw a cat astronaut", gjson.GetBytes(body, "input.messages.0.content.0.text").String())
+			require.False(t, gjson.GetBytes(body, "input.prompt").Exists())
+			require.Equal(t, "1280*1280", gjson.GetBytes(body, "parameters.size").String())
+			require.Equal(t, int64(1), gjson.GetBytes(body, "parameters.n").Int())
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"request_id":"req-submit","output":{"task_id":"task-27","task_status":"PENDING"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/tasks/task-27":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"request_id":"req-poll-27","output":{"task_id":"task-27","task_status":"SUCCEEDED","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":[{"image":"https://img.example/wan27.png","type":"image"}]}}]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body := []byte(`{"model":"wan2.7-image","prompt":"draw a cat astronaut","n":1,"size":"1280*1280"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	account := &Account{
+		ID:       7,
+		Type:     AccountTypeAPIKey,
+		Platform: PlatformQwen,
+		Credentials: map[string]any{
+			"api_key":          "dashscope-key",
+			"base_url":         server.URL,
+			"poll_interval_ms": 1,
+			"poll_timeout_ms":  2000,
+		},
+	}
+
+	result, err := svc.forwardQwenWanxImages(context.Background(), c, account, parsed)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "/services/aigc/image-generation/generation", submitPath)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "https://img.example/wan27.png", gjson.Get(rec.Body.String(), "data.0.url").String())
+	require.Equal(t, "wan2.7-image", result.UpstreamModel)
+	require.Equal(t, 1, result.ImageCount)
+}
+
+func TestForwardQwenWanxImages_Wan27ProUsesImageGenerationEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var submittedModel string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost:
+			require.Equal(t, "/services/aigc/image-generation/generation", r.URL.Path)
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+			submittedModel = gjson.GetBytes(body, "model").String()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"request_id":"req-submit","output":{"task_id":"task-27-pro","task_status":"PENDING"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/tasks/task-27-pro":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"request_id":"req-poll-27-pro","output":{"task_id":"task-27-pro","task_status":"SUCCEEDED","choices":[{"message":{"content":[{"image":"https://img.example/wan27-pro.png"}]}}]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body := []byte(`{"model":"wan2.7-image-pro","prompt":"draw a cat astronaut","n":1,"size":"1024*576"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	account := &Account{
+		ID:       7,
+		Type:     AccountTypeAPIKey,
+		Platform: PlatformQwen,
+		Credentials: map[string]any{
+			"api_key":          "dashscope-key",
+			"base_url":         server.URL,
+			"poll_interval_ms": 1,
+			"poll_timeout_ms":  2000,
+		},
+	}
+
+	result, err := svc.forwardQwenWanxImages(context.Background(), c, account, parsed)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "wan2.7-image-pro", submittedModel)
+	require.Equal(t, "wan2.7-image-pro", result.UpstreamModel)
+	require.Equal(t, "https://img.example/wan27-pro.png", gjson.Get(rec.Body.String(), "data.0.url").String())
+}
+
+func TestForwardQwenWanxImages_Wan26ReadsChoicesImageURLs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/services/aigc/image-generation/generation":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"request_id":"req-submit","output":{"task_id":"task-choices","task_status":"PENDING"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/tasks/task-choices":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"request_id":"req-poll-choices","output":{"task_id":"task-choices","task_status":"SUCCEEDED","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":[{"image":"https://img.example/wan26-choice.png","type":"image"}]}}]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body := []byte(`{"model":"wan2.6-t2i","prompt":"draw a cat astronaut","n":1,"size":"1024*576"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	account := &Account{
+		ID:       7,
+		Type:     AccountTypeAPIKey,
+		Platform: PlatformQwen,
+		Credentials: map[string]any{
+			"api_key":          "dashscope-key",
+			"base_url":         server.URL,
+			"poll_interval_ms": 1,
+			"poll_timeout_ms":  2000,
+		},
+	}
+
+	result, err := svc.forwardQwenWanxImages(context.Background(), c, account, parsed)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "https://img.example/wan26-choice.png", gjson.Get(rec.Body.String(), "data.0.url").String())
+	require.Equal(t, 1, result.ImageCount)
+}
+
 func TestForwardQwenWanxImages_MissingAPIKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -62,6 +62,8 @@ func TestParseOpenAIImagesRequest_AllowsWanxTextToImageModels(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	models := []string{
+		"wan2.7-image",
+		"wan2.7-image-pro",
 		"wan2.6-t2i",
 		"wan2.5-t2i-preview",
 		"wan2.2-t2i-flash",

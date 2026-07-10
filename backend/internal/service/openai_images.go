@@ -479,7 +479,9 @@ func isOpenAIImageGenerationModel(model string) bool {
 
 func isWanxImageGenerationModel(model string) bool {
 	switch strings.ToLower(strings.TrimSpace(model)) {
-	case "wan2.6-t2i",
+	case "wan2.7-image",
+		"wan2.7-image-pro",
+		"wan2.6-t2i",
 		"wan2.5-t2i-preview",
 		"wan2.2-t2i-flash",
 		"wanx2.1-t2i-turbo",

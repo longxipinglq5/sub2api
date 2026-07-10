@@ -54,6 +54,8 @@ describe('useModelWhitelist', () => {
   it('returns qwen wanx image models', () => {
     const models = getModelsByPlatform('qwen')
 
+    expect(models).toContain('wan2.7-image')
+    expect(models).toContain('wan2.7-image-pro')
     expect(models).toContain('wan2.6-t2i')
     expect(models).toContain('wanx2.1-t2i-turbo')
   })

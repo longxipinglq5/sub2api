@@ -3074,6 +3074,7 @@ import {
 } from "./groupsModelsList";
 import { createModelsListCandidatesTracker } from "./groupsModelsListCandidates";
 import { normalizeSupportedModelScopesForPlatform } from "./groupsSupportedModelScopes";
+import { createGroupPlatformFilterOptions, createGroupPlatformOptions } from "./groupsPlatformOptions";
 
 const { t } = useI18n();
 const appStore = useAppStore();
@@ -3129,22 +3130,9 @@ const exclusiveOptions = computed(() => [
   { value: "false", label: t("admin.groups.nonExclusive") },
 ]);
 
-const platformOptions = computed(() => [
-  { value: "anthropic", label: "Anthropic" },
-  { value: "openai", label: "OpenAI" },
-  { value: "gemini", label: "Gemini" },
-  { value: "antigravity", label: "Antigravity" },
-  { value: "grok", label: "Grok" },
-]);
+const platformOptions = computed(() => createGroupPlatformOptions());
 
-const platformFilterOptions = computed(() => [
-  { value: "", label: t("admin.groups.allPlatforms") },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "openai", label: "OpenAI" },
-  { value: "gemini", label: "Gemini" },
-  { value: "antigravity", label: "Antigravity" },
-  { value: "grok", label: "Grok" },
-]);
+const platformFilterOptions = computed(() => createGroupPlatformFilterOptions(t("admin.groups.allPlatforms")));
 
 const editStatusOptions = computed(() => [
   { value: "active", label: t("admin.accounts.status.active") },

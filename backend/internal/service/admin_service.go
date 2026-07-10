@@ -1783,6 +1783,23 @@ func defaultModelsListCandidateIDs(platform string) []string {
 		return ids
 	case PlatformGrok:
 		return xai.DefaultModelIDs()
+	case PlatformQwen:
+		return []string{
+			"qwen-turbo",
+			"qwen-plus",
+			"qwen-max",
+			"qwen-max-longcontext",
+			"qwen-long",
+			"qwen3-235b-a22b",
+			"qwq-32b",
+			"wan2.7-image",
+			"wan2.7-image-pro",
+			"wan2.6-t2i",
+			"wan2.5-t2i-preview",
+			"wan2.2-t2i-flash",
+			"wanx2.1-t2i-turbo",
+			"wanx2.1-t2i-plus",
+		}
 	default:
 		ids := make([]string, 0, len(claude.DefaultModels))
 		for _, model := range claude.DefaultModels {
