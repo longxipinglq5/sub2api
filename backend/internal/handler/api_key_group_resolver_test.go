@@ -53,6 +53,30 @@ func TestResolveEffectiveAPIKeyGroupForPlatform_SkipsOtherPlatforms(t *testing.T
 	require.Equal(t, service.PlatformGemini, apiKey.Group.Platform)
 }
 
+func TestResolveEffectiveAPIKeyGroupForPlatform_PrimaryQwenSelectsOpenAIGroup(t *testing.T) {
+	qwenGroupID := int64(5)
+	apiKey := &service.APIKey{
+		ID:       1,
+		GroupID:  &qwenGroupID,
+		GroupIDs: []int64{5, 2},
+		Group:    &service.Group{ID: 5, Platform: service.PlatformQwen},
+		Groups: []service.Group{
+			{ID: 5, Platform: service.PlatformQwen},
+			{ID: 2, Platform: service.PlatformOpenAI},
+		},
+	}
+
+	got, err := resolveEffectiveAPIKeyGroupForPlatform(context.Background(), handlerFakeModelGroupMatcher{matches: map[int64]bool{5: true, 2: true}}, apiKey, "gpt-5.5", service.PlatformOpenAI)
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, int64(2), *got)
+	require.NotNil(t, apiKey.GroupID)
+	require.Equal(t, int64(2), *apiKey.GroupID)
+	require.NotNil(t, apiKey.Group)
+	require.Equal(t, service.PlatformOpenAI, apiKey.Group.Platform)
+}
+
 type handlerFakeModelGroupMatcher struct {
 	matches map[int64]bool
 }

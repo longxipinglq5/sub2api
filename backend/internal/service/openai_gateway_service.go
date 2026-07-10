@@ -2460,7 +2460,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImagesPlatform(
 	excludedIDs map[int64]struct{},
 	requiredCapability OpenAIImagesCapability,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	requestedIsWanx := isWanxImageGenerationModel(requestedModel)
+	requestedIsWanx := IsWanxImageGenerationModel(requestedModel)
 	if strings.TrimSpace(platform) == PlatformQwen {
 		if !requestedIsWanx {
 			return nil, OpenAIAccountScheduleDecision{Layer: openAIAccountScheduleLayerLoadBalance},
@@ -2653,7 +2653,7 @@ func qwenImageAccountEligible(ctx context.Context, account *Account, requestedMo
 	if account == nil || account.Platform != PlatformQwen || account.Type != AccountTypeAPIKey {
 		return false
 	}
-	if !isWanxImageGenerationModel(requestedModel) {
+	if !IsWanxImageGenerationModel(requestedModel) {
 		return false
 	}
 	if !account.IsSchedulableForModelWithContext(ctx, requestedModel) {

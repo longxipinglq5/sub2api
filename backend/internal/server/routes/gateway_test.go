@@ -42,7 +42,36 @@ func newGatewayRoutesTestRouter(platform ...string) *gin.Engine {
 		nil,
 		nil,
 		nil,
-		&config.Config{},
+		&config.Config{Gateway: config.GatewayConfig{MaxBodySize: 1 << 20}},
+	)
+
+	return router
+}
+
+func newGatewayRoutesTestRouterWithAPIKey(apiKey *service.APIKey, maxBodySize ...int64) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	bodyLimit := int64(1 << 20)
+	if len(maxBodySize) > 0 {
+		bodyLimit = maxBodySize[0]
+	}
+
+	RegisterGatewayRoutes(
+		router,
+		&handler.Handlers{
+			Gateway:       &handler.GatewayHandler{},
+			OpenAIGateway: &handler.OpenAIGatewayHandler{},
+		},
+		servermiddleware.APIKeyAuthMiddleware(func(c *gin.Context) {
+			c.Set(string(servermiddleware.ContextKeyAPIKey), apiKey)
+			c.Set(string(servermiddleware.ContextKeyUser), servermiddleware.AuthSubject{UserID: 1, Concurrency: 1})
+			c.Next()
+		}),
+		nil,
+		nil,
+		nil,
+		nil,
+		&config.Config{Gateway: config.GatewayConfig{MaxBodySize: bodyLimit}},
 	)
 
 	return router
@@ -174,4 +203,119 @@ func TestGatewayRoutes_QwenImages(t *testing.T) {
 		message, _ := errorObj["message"].(string)
 		require.NotEmpty(t, message)
 	}
+}
+
+func TestAPIKeyHasGroupPlatform_IncludesSecondaryGroups(t *testing.T) {
+	primaryGroupID := int64(5)
+	apiKey := &service.APIKey{
+		GroupID: &primaryGroupID,
+		Group:   &service.Group{ID: 5, Platform: service.PlatformQwen},
+		Groups: []service.Group{
+			{ID: 5, Platform: service.PlatformQwen},
+			{ID: 2, Platform: service.PlatformOpenAI},
+		},
+	}
+
+	require.True(t, apiKeyHasGroupPlatform(apiKey, service.PlatformOpenAI))
+	require.True(t, apiKeyHasGroupPlatform(apiKey, service.PlatformQwen))
+	require.False(t, apiKeyHasGroupPlatform(apiKey, service.PlatformGemini))
+}
+
+func TestGatewayRoutesChatCompletions_UsesOpenAIHandlerWhenSecondaryGroupIsOpenAI(t *testing.T) {
+	primaryGroupID := int64(5)
+	router := newGatewayRoutesTestRouterWithAPIKey(&service.APIKey{
+		ID:       1,
+		GroupID:  &primaryGroupID,
+		GroupIDs: []int64{5, 2},
+		Group:    &service.Group{ID: 5, Platform: service.PlatformQwen},
+		Groups: []service.Group{
+			{ID: 5, Platform: service.PlatformQwen},
+			{ID: 2, Platform: service.PlatformOpenAI},
+		},
+		User: &service.User{ID: 1, Status: service.StatusActive},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Contains(t, w.Body.String(), "Service temporarily unavailable")
+}
+
+func TestGatewayRoutesChatCompletions_ModelPeekReturns413WhenBodyTooLarge(t *testing.T) {
+	primaryGroupID := int64(5)
+	router := newGatewayRoutesTestRouterWithAPIKey(&service.APIKey{
+		ID:       1,
+		GroupID:  &primaryGroupID,
+		GroupIDs: []int64{5, 2},
+		Group:    &service.Group{ID: 5, Platform: service.PlatformQwen},
+		Groups: []service.Group{
+			{ID: 5, Platform: service.PlatformQwen},
+			{ID: 2, Platform: service.PlatformOpenAI},
+		},
+		User: &service.User{ID: 1, Status: service.StatusActive},
+	}, 8)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5.5"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+}
+
+func TestShouldUseOpenAIChatCompletionsHandler_RoutesByPrimaryOrModel(t *testing.T) {
+	require.True(t, shouldUseOpenAIChatCompletionsHandler(&service.APIKey{
+		Group: &service.Group{Platform: service.PlatformOpenAI},
+	}, "claude-sonnet-4-5"))
+
+	require.True(t, shouldUseOpenAIChatCompletionsHandler(&service.APIKey{
+		Group: &service.Group{Platform: service.PlatformQwen},
+		Groups: []service.Group{
+			{Platform: service.PlatformQwen},
+			{Platform: service.PlatformOpenAI},
+		},
+	}, "gpt-5.5"))
+
+	require.False(t, shouldUseOpenAIChatCompletionsHandler(&service.APIKey{
+		Group: &service.Group{Platform: service.PlatformAnthropic},
+		Groups: []service.Group{
+			{Platform: service.PlatformAnthropic},
+			{Platform: service.PlatformOpenAI},
+		},
+	}, "claude-sonnet-4-5"))
+}
+
+func TestShouldUseOpenAIResponsesHandler_RoutesByPrimaryOrModel(t *testing.T) {
+	require.True(t, shouldUseOpenAIResponsesHandler(&service.APIKey{
+		Group: &service.Group{Platform: service.PlatformOpenAI},
+	}, "claude-sonnet-4-5"))
+
+	require.True(t, shouldUseOpenAIResponsesHandler(&service.APIKey{
+		Group: &service.Group{Platform: service.PlatformQwen},
+		Groups: []service.Group{
+			{Platform: service.PlatformQwen},
+			{Platform: service.PlatformOpenAI},
+		},
+	}, "gpt-5.5"))
+
+	require.True(t, shouldUseOpenAIResponsesHandler(&service.APIKey{
+		Group: &service.Group{Platform: service.PlatformAnthropic},
+		Groups: []service.Group{
+			{Platform: service.PlatformAnthropic},
+			{Platform: service.PlatformGrok},
+		},
+	}, "grok-4"))
+
+	require.False(t, shouldUseOpenAIResponsesHandler(&service.APIKey{
+		Group: &service.Group{Platform: service.PlatformAnthropic},
+		Groups: []service.Group{
+			{Platform: service.PlatformAnthropic},
+			{Platform: service.PlatformOpenAI},
+		},
+	}, "claude-sonnet-4-5"))
 }

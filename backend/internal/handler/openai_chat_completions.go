@@ -95,7 +95,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
-	if _, err := resolveEffectiveAPIKeyGroupForRequest(c.Request.Context(), h.gatewayService, apiKey, reqModel); err != nil {
+	if _, err := resolveEffectiveAPIKeyGroupForPlatform(c.Request.Context(), h.gatewayService, apiKey, reqModel, service.PlatformOpenAI); err != nil {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", err.Error())
 		return
 	}

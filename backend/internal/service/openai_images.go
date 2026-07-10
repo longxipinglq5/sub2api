@@ -214,11 +214,11 @@ func (s *OpenAIGatewayService) ParseOpenAIImagesRequest(c *gin.Context, body []b
 		}
 	}
 
-	if isWanxImageGenerationModel(req.Model) && req.Endpoint != openAIImagesGenerationsEndpoint {
+	if IsWanxImageGenerationModel(req.Model) && req.Endpoint != openAIImagesGenerationsEndpoint {
 		return nil, fmt.Errorf("Qwen Wanx images only support generations")
 	}
 
-	if isWanxImageGenerationModel(req.Model) {
+	if IsWanxImageGenerationModel(req.Model) {
 		if req.Multipart {
 			return nil, fmt.Errorf("multipart is not supported for Wanx image models")
 		}
@@ -477,7 +477,7 @@ func isOpenAIImageGenerationModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-image-")
 }
 
-func isWanxImageGenerationModel(model string) bool {
+func IsWanxImageGenerationModel(model string) bool {
 	switch strings.ToLower(strings.TrimSpace(model)) {
 	case "wan2.6-t2i",
 		"wan2.5-t2i-preview",
@@ -492,7 +492,7 @@ func isWanxImageGenerationModel(model string) bool {
 
 func validateOpenAIImagesModel(model string) error {
 	model = strings.TrimSpace(model)
-	if isOpenAIImageGenerationModel(model) || isWanxImageGenerationModel(model) {
+	if isOpenAIImageGenerationModel(model) || IsWanxImageGenerationModel(model) {
 		return nil
 	}
 	if model == "" {
@@ -579,12 +579,12 @@ func (s *OpenAIGatewayService) ForwardImages(
 		return nil, fmt.Errorf("parsed images request is required")
 	}
 	if account != nil && account.Platform == PlatformQwen {
-		if !isWanxImageGenerationModel(parsed.Model) {
+		if !IsWanxImageGenerationModel(parsed.Model) {
 			return nil, fmt.Errorf("Qwen images requires a Wanx image model, got %q", parsed.Model)
 		}
 		return s.forwardQwenWanxImages(ctx, c, account, parsed)
 	}
-	if isWanxImageGenerationModel(parsed.Model) {
+	if IsWanxImageGenerationModel(parsed.Model) {
 		return nil, fmt.Errorf("Wanx image models require a Qwen account")
 	}
 	switch account.Type {
