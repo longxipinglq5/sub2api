@@ -93,6 +93,10 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	if service.IsImageGenerationIntent("/v1/responses", reqModel, body) {
 		requestCtx = service.WithOpenAIImageGenerationIntent(requestCtx)
 	}
+	if _, err := resolveEffectiveAPIKeyGroupForRequest(requestCtx, h.gatewayService, apiKey, reqModel); err != nil {
+		h.responsesErrorResponse(c, http.StatusForbidden, "permission_error", err.Error())
+		return
+	}
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(requestCtx, apiKey.GroupID, reqModel)

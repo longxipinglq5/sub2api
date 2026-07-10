@@ -37,6 +37,18 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	// api_keys: key length should be 128
 	requireColumn(t, tx, "api_keys", "key", "character varying", 128, false)
 
+	// api_key_groups: multi-group bindings for API keys
+	var apiKeyGroupsRegclass sql.NullString
+	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.api_key_groups')").Scan(&apiKeyGroupsRegclass))
+	require.True(t, apiKeyGroupsRegclass.Valid, "expected api_key_groups table to exist")
+	requireColumn(t, tx, "api_key_groups", "id", "bigint", 0, false)
+	requireColumn(t, tx, "api_key_groups", "api_key_id", "bigint", 0, false)
+	requireColumn(t, tx, "api_key_groups", "group_id", "bigint", 0, false)
+	requireColumn(t, tx, "api_key_groups", "priority", "integer", 0, false)
+	requireColumn(t, tx, "api_key_groups", "created_at", "timestamp with time zone", 0, false)
+	requireIndex(t, tx, "api_key_groups", "api_key_groups_pkey")
+	requireIndex(t, tx, "api_key_groups", "idx_api_key_groups_group_id")
+
 	// redeem_codes: subscription fields
 	requireColumn(t, tx, "redeem_codes", "group_id", "bigint", 0, true)
 	requireColumn(t, tx, "redeem_codes", "validity_days", "integer", 0, false)

@@ -10,6 +10,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
+	"github.com/Wei-Shaw/sub2api/ent/apikeygroupbinding"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/ent/user"
@@ -75,6 +76,7 @@ func (r *apiKeyRepository) GetByID(ctx context.Context, id int64) (*service.APIK
 		Where(apikey.IDEQ(id)).
 		WithUser().
 		WithGroup().
+		WithGroupBindings(orderAPIKeyGroupBindings).
 		Only(ctx)
 	if err != nil {
 		if dbent.IsNotFound(err) {
@@ -113,6 +115,7 @@ func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*service.A
 			})
 		}).
 		WithGroup().
+		WithGroupBindings(orderAPIKeyGroupBindings).
 		Only(ctx)
 	if err != nil {
 		if dbent.IsNotFound(err) {
@@ -195,6 +198,11 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				group.FieldModelsListConfig,
 				group.FieldRpmLimit,
 			)
+		}).
+		WithGroupBindings(func(q *dbent.APIKeyGroupBindingQuery) {
+			q.Select(apikeygroupbinding.FieldGroupID, apikeygroupbinding.FieldPriority).
+				WithGroup().
+				Order(apikeygroupbinding.ByPriority(), apikeygroupbinding.ByGroupID())
 		}).
 		Only(ctx)
 	if err != nil {
@@ -398,9 +406,12 @@ func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID int64, param
 	}
 	if filters.GroupID != nil {
 		if *filters.GroupID == 0 {
-			q = q.Where(apikey.GroupIDIsNil())
+			q = q.Where(apikey.GroupIDIsNil(), apikey.Not(apikey.HasGroupBindings()))
 		} else {
-			q = q.Where(apikey.GroupIDEQ(*filters.GroupID))
+			q = q.Where(apikey.Or(
+				apikey.GroupIDEQ(*filters.GroupID),
+				apikey.HasGroupBindingsWith(apikeygroupbinding.GroupIDEQ(*filters.GroupID)),
+			))
 		}
 	}
 
@@ -411,6 +422,7 @@ func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID int64, param
 
 	keysQuery := q.
 		WithGroup().
+		WithGroupBindings(orderAPIKeyGroupBindings).
 		Offset(params.Offset()).
 		Limit(params.Limit())
 	for _, order := range apiKeyListOrder(params) {
@@ -455,7 +467,10 @@ func (r *apiKeyRepository) ExistsByKey(ctx context.Context, key string) (bool, e
 }
 
 func (r *apiKeyRepository) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]service.APIKey, *pagination.PaginationResult, error) {
-	q := r.activeQuery().Where(apikey.GroupIDEQ(groupID))
+	q := r.activeQuery().Where(apikey.Or(
+		apikey.GroupIDEQ(groupID),
+		apikey.HasGroupBindingsWith(apikeygroupbinding.GroupIDEQ(groupID)),
+	))
 
 	total, err := q.Count(ctx)
 	if err != nil {
@@ -464,6 +479,7 @@ func (r *apiKeyRepository) ListByGroupID(ctx context.Context, groupID int64, par
 
 	keysQuery := q.
 		WithUser().
+		WithGroupBindings(orderAPIKeyGroupBindings).
 		Offset(params.Offset()).
 		Limit(params.Limit())
 	for _, order := range apiKeyListOrder(params) {
@@ -507,6 +523,10 @@ func apiKeyListOrder(params pagination.PaginationParams) []func(*entsql.Selector
 		return []func(*entsql.Selector){dbent.Asc(field), dbent.Asc(apikey.FieldID)}
 	}
 	return []func(*entsql.Selector){dbent.Desc(field), dbent.Desc(apikey.FieldID)}
+}
+
+func orderAPIKeyGroupBindings(q *dbent.APIKeyGroupBindingQuery) {
+	q.Order(apikeygroupbinding.ByPriority(), apikeygroupbinding.ByGroupID())
 }
 
 // SearchAPIKeys searches API keys by user ID and/or keyword (name)
@@ -553,7 +573,10 @@ func (r *apiKeyRepository) UpdateGroupIDByUserAndGroup(ctx context.Context, user
 
 // CountByGroupID 获取分组的 API Key 数量
 func (r *apiKeyRepository) CountByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	count, err := r.activeQuery().Where(apikey.GroupIDEQ(groupID)).Count(ctx)
+	count, err := r.activeQuery().Where(apikey.Or(
+		apikey.GroupIDEQ(groupID),
+		apikey.HasGroupBindingsWith(apikeygroupbinding.GroupIDEQ(groupID)),
+	)).Count(ctx)
 	return int64(count), err
 }
 
@@ -571,6 +594,67 @@ func (r *apiKeyRepository) ListKeysByUserID(ctx context.Context, userID int64) (
 func (r *apiKeyRepository) ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error) {
 	keys, err := r.activeQuery().
 		Where(apikey.GroupIDEQ(groupID)).
+		Select(apikey.FieldKey).
+		Strings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func (r *apiKeyRepository) SetGroupIDs(ctx context.Context, apiKeyID int64, groupIDs []int64) error {
+	client := clientFromContext(ctx, r.client)
+	if _, err := client.APIKeyGroupBinding.Delete().
+		Where(apikeygroupbinding.APIKeyIDEQ(apiKeyID)).
+		Exec(ctx); err != nil {
+		return err
+	}
+
+	seen := make(map[int64]struct{}, len(groupIDs))
+	priority := 0
+	for _, groupID := range groupIDs {
+		if groupID <= 0 {
+			continue
+		}
+		if _, ok := seen[groupID]; ok {
+			continue
+		}
+		seen[groupID] = struct{}{}
+
+		if _, err := client.APIKeyGroupBinding.Create().
+			SetAPIKeyID(apiKeyID).
+			SetGroupID(groupID).
+			SetPriority(priority).
+			Save(ctx); err != nil {
+			return err
+		}
+		priority++
+	}
+	return nil
+}
+
+func (r *apiKeyRepository) ListGroupIDs(ctx context.Context, apiKeyID int64) ([]int64, error) {
+	client := clientFromContext(ctx, r.client)
+	bindings, err := client.APIKeyGroupBinding.Query().
+		Where(apikeygroupbinding.APIKeyIDEQ(apiKeyID)).
+		Order(apikeygroupbinding.ByPriority(), apikeygroupbinding.ByGroupID()).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	groupIDs := make([]int64, 0, len(bindings))
+	for _, binding := range bindings {
+		groupIDs = append(groupIDs, binding.GroupID)
+	}
+	return groupIDs, nil
+}
+
+func (r *apiKeyRepository) ListKeysByAnyGroupID(ctx context.Context, groupID int64) ([]string, error) {
+	keys, err := r.activeQuery().
+		Where(apikey.Or(
+			apikey.GroupIDEQ(groupID),
+			apikey.HasGroupBindingsWith(apikeygroupbinding.GroupIDEQ(groupID)),
+		)).
 		Select(apikey.FieldKey).
 		Strings(ctx)
 	if err != nil {
@@ -735,6 +819,21 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 	}
 	if m.Edges.Group != nil {
 		out.Group = groupEntityToService(m.Edges.Group)
+	}
+	if len(m.Edges.GroupBindings) > 0 {
+		out.GroupIDs = make([]int64, 0, len(m.Edges.GroupBindings))
+		out.Groups = make([]service.Group, 0, len(m.Edges.GroupBindings))
+		for _, binding := range m.Edges.GroupBindings {
+			if binding == nil {
+				continue
+			}
+			out.GroupIDs = append(out.GroupIDs, binding.GroupID)
+			if binding.Edges.Group != nil {
+				out.Groups = append(out.Groups, *groupEntityToService(binding.Edges.Group))
+			}
+		}
+	} else if m.GroupID != nil {
+		out.GroupIDs = []int64{*m.GroupID}
 	}
 	return out
 }

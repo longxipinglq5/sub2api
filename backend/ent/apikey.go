@@ -78,11 +78,13 @@ type APIKeyEdges struct {
 	User *User `json:"user,omitempty"`
 	// Group holds the value of the group edge.
 	Group *Group `json:"group,omitempty"`
+	// GroupBindings holds the value of the group_bindings edge.
+	GroupBindings []*APIKeyGroupBinding `json:"group_bindings,omitempty"`
 	// UsageLogs holds the value of the usage_logs edge.
 	UsageLogs []*UsageLog `json:"usage_logs,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [3]bool
+	loadedTypes [4]bool
 }
 
 // UserOrErr returns the User value or an error if the edge
@@ -107,10 +109,19 @@ func (e APIKeyEdges) GroupOrErr() (*Group, error) {
 	return nil, &NotLoadedError{edge: "group"}
 }
 
+// GroupBindingsOrErr returns the GroupBindings value or an error if the edge
+// was not loaded in eager-loading.
+func (e APIKeyEdges) GroupBindingsOrErr() ([]*APIKeyGroupBinding, error) {
+	if e.loadedTypes[2] {
+		return e.GroupBindings, nil
+	}
+	return nil, &NotLoadedError{edge: "group_bindings"}
+}
+
 // UsageLogsOrErr returns the UsageLogs value or an error if the edge
 // was not loaded in eager-loading.
 func (e APIKeyEdges) UsageLogsOrErr() ([]*UsageLog, error) {
-	if e.loadedTypes[2] {
+	if e.loadedTypes[3] {
 		return e.UsageLogs, nil
 	}
 	return nil, &NotLoadedError{edge: "usage_logs"}
@@ -322,6 +333,11 @@ func (_m *APIKey) QueryUser() *UserQuery {
 // QueryGroup queries the "group" edge of the APIKey entity.
 func (_m *APIKey) QueryGroup() *GroupQuery {
 	return NewAPIKeyClient(_m.config).QueryGroup(_m)
+}
+
+// QueryGroupBindings queries the "group_bindings" edge of the APIKey entity.
+func (_m *APIKey) QueryGroupBindings() *APIKeyGroupBindingQuery {
+	return NewAPIKeyClient(_m.config).QueryGroupBindings(_m)
 }
 
 // QueryUsageLogs queries the "usage_logs" edge of the APIKey entity.

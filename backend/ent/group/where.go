@@ -1463,6 +1463,29 @@ func HasAPIKeysWith(preds ...predicate.APIKey) predicate.Group {
 	})
 }
 
+// HasAPIKeyBindings applies the HasEdge predicate on the "api_key_bindings" edge.
+func HasAPIKeyBindings() predicate.Group {
+	return predicate.Group(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, true, APIKeyBindingsTable, APIKeyBindingsColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasAPIKeyBindingsWith applies the HasEdge predicate on the "api_key_bindings" edge with a given conditions (other predicates).
+func HasAPIKeyBindingsWith(preds ...predicate.APIKeyGroupBinding) predicate.Group {
+	return predicate.Group(func(s *sql.Selector) {
+		step := newAPIKeyBindingsStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
 // HasRedeemCodes applies the HasEdge predicate on the "redeem_codes" edge.
 func HasRedeemCodes() predicate.Group {
 	return predicate.Group(func(s *sql.Selector) {

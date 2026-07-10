@@ -10,6 +10,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/announcement"
 	"github.com/Wei-Shaw/sub2api/ent/announcementread"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
+	"github.com/Wei-Shaw/sub2api/ent/apikeygroupbinding"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitor"
@@ -141,6 +142,16 @@ func init() {
 	apikeyDescUsage7d := apikeyFields[16].Descriptor()
 	// apikey.DefaultUsage7d holds the default value on creation for the usage_7d field.
 	apikey.DefaultUsage7d = apikeyDescUsage7d.Default.(float64)
+	apikeygroupbindingFields := schema.APIKeyGroupBinding{}.Fields()
+	_ = apikeygroupbindingFields
+	// apikeygroupbindingDescPriority is the schema descriptor for priority field.
+	apikeygroupbindingDescPriority := apikeygroupbindingFields[2].Descriptor()
+	// apikeygroupbinding.DefaultPriority holds the default value on creation for the priority field.
+	apikeygroupbinding.DefaultPriority = apikeygroupbindingDescPriority.Default.(int)
+	// apikeygroupbindingDescCreatedAt is the schema descriptor for created_at field.
+	apikeygroupbindingDescCreatedAt := apikeygroupbindingFields[3].Descriptor()
+	// apikeygroupbinding.DefaultCreatedAt holds the default value on creation for the created_at field.
+	apikeygroupbinding.DefaultCreatedAt = apikeygroupbindingDescCreatedAt.Default.(func() time.Time)
 	accountMixin := schema.Account{}.Mixin()
 	accountMixinHooks1 := accountMixin[1].Hooks()
 	account.Hooks[0] = accountMixinHooks1[0]

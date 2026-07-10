@@ -82,6 +82,14 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		zap.String("capability", string(parsed.RequiredCapability)),
 	)
 
+	targetPlatform := service.PlatformOpenAI
+	if service.IsWanxImageGenerationModel(requestModel) {
+		targetPlatform = service.PlatformQwen
+	}
+	if _, err := resolveEffectiveAPIKeyGroupForPlatform(c.Request.Context(), h.gatewayService, apiKey, requestModel, targetPlatform); err != nil {
+		h.errorResponse(c, http.StatusForbidden, "permission_error", err.Error())
+		return
+	}
 	if !service.GroupAllowsImageGeneration(apiKey.Group) {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
 		return
@@ -136,12 +144,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, body)
 	requestCtx := service.WithOpenAIImageGenerationIntent(c.Request.Context())
-	groupPlatform := service.PlatformOpenAI
-	if apiKey != nil && apiKey.Group != nil {
-		if trimmed := strings.TrimSpace(apiKey.Group.Platform); trimmed != "" {
-			groupPlatform = trimmed
-		}
-	}
+	groupPlatform := targetPlatform
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0

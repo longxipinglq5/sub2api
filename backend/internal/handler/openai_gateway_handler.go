@@ -251,6 +251,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
+	if _, err := resolveEffectiveAPIKeyGroupForRequest(c.Request.Context(), h.gatewayService, apiKey, reqModel); err != nil {
+		h.errorResponse(c, http.StatusForbidden, "permission_error", err.Error())
+		return
+	}
+
 	if decision := h.checkContentModeration(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, reqModel, body); decision != nil && decision.Blocked {
 		h.errorResponse(c, contentModerationStatus(decision), contentModerationErrorCode(decision), decision.Message)
 		return
@@ -697,6 +702,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	if _, err := resolveEffectiveAPIKeyGroupForRequest(c.Request.Context(), h.gatewayService, apiKey, reqModel); err != nil {
+		h.anthropicErrorResponse(c, http.StatusForbidden, "permission_error", err.Error())
+		return
+	}
 	routingModel := service.NormalizeOpenAICompatRequestedModel(reqModel)
 	preferredMappedModel := resolveOpenAIMessagesDispatchMappedModel(apiKey, reqModel)
 	reqStream := gjson.GetBytes(body, "stream").Bool()
@@ -1271,6 +1280,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	if decision := h.checkContentModeration(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, reqModel, firstMessage); decision != nil && decision.Blocked {
 		writeContentModerationWSError(ctx, wsConn, decision)
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, decision.Message)
+		return
+	}
+
+	if _, err := resolveEffectiveAPIKeyGroupForRequest(ctx, h.gatewayService, apiKey, reqModel); err != nil {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, err.Error())
 		return
 	}
 

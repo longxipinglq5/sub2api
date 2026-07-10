@@ -476,6 +476,10 @@ func (s *OpenAIGatewayService) ResolveChannelMappingAndRestrict(ctx context.Cont
 	return s.channelService.ResolveChannelMappingAndRestrict(ctx, groupID, model)
 }
 
+func (s *OpenAIGatewayService) GroupSupportsModel(ctx context.Context, groupID int64, model string) (bool, error) {
+	return !s.checkChannelPricingRestriction(ctx, &groupID, model), nil
+}
+
 func (s *OpenAIGatewayService) isCodexImageGenerationBridgeEnabled(ctx context.Context, account *Account, apiKey *APIKey) bool {
 	if override := account.CodexImageGenerationBridgeOverride(); override != nil {
 		return *override
@@ -2456,7 +2460,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImagesPlatform(
 	excludedIDs map[int64]struct{},
 	requiredCapability OpenAIImagesCapability,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	requestedIsWanx := isWanxImageGenerationModel(requestedModel)
+	requestedIsWanx := IsWanxImageGenerationModel(requestedModel)
 	if strings.TrimSpace(platform) == PlatformQwen {
 		if !requestedIsWanx {
 			return nil, OpenAIAccountScheduleDecision{Layer: openAIAccountScheduleLayerLoadBalance},
@@ -2649,7 +2653,7 @@ func qwenImageAccountEligible(ctx context.Context, account *Account, requestedMo
 	if account == nil || account.Platform != PlatformQwen || account.Type != AccountTypeAPIKey {
 		return false
 	}
-	if !isWanxImageGenerationModel(requestedModel) {
+	if !IsWanxImageGenerationModel(requestedModel) {
 		return false
 	}
 	if !account.IsSchedulableForModelWithContext(ctx, requestedModel) {
