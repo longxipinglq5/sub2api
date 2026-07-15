@@ -85,6 +85,8 @@ describe('AvailableChannelsTable', () => {
 
     expect(wrapper.find('table').exists()).toBe(false)
     expect(wrapper.findAll('article')).toHaveLength(2)
+    expect(wrapper.get('[data-testid="channel-card-grid"]').classes()).toContain('items-stretch')
+    expect(wrapper.findAll('article').every((card) => card.classes().includes('h-full'))).toBe(true)
     expect(wrapper.text()).toContain('ChatGPT Channel')
     expect(wrapper.text()).toContain('openai-default')
     expect(wrapper.text()).toContain('gpt-5.5')

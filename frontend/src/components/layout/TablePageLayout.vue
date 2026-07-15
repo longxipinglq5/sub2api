@@ -12,7 +12,9 @@
 
     <!-- 滚动区域：表格 -->
     <div class="layout-section-scrollable">
-      <div class="card table-scroll-container">
+      <div
+        :class="contentVariant === 'cards' ? 'cards-scroll-container' : 'card table-scroll-container'"
+      >
         <slot name="table" />
       </div>
     </div>
@@ -26,6 +28,15 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+
+withDefaults(
+  defineProps<{
+    contentVariant?: 'table' | 'cards'
+  }>(),
+  {
+    contentVariant: 'table',
+  },
+)
 
 const isMobile = ref(false)
 
@@ -63,6 +74,11 @@ onUnmounted(() => {
   @apply flex flex-col overflow-hidden h-full bg-white dark:bg-dark-800 rounded-2xl border border-gray-200 dark:border-dark-700 shadow-sm;
 }
 
+.cards-scroll-container {
+  @apply h-full overflow-y-auto p-4 sm:p-5;
+  scrollbar-gutter: stable;
+}
+
 .table-scroll-container :deep(.table-wrapper) {
   @apply flex-1 overflow-x-auto overflow-y-auto;
   /* 确保横向滚动条显示在最底部 */
@@ -98,6 +114,10 @@ onUnmounted(() => {
 
 .table-page-layout.mobile-mode .layout-section-scrollable {
   @apply flex-none min-h-fit;
+}
+
+.table-page-layout.mobile-mode .cards-scroll-container {
+  @apply h-auto overflow-visible p-3 sm:p-4;
 }
 
 .table-page-layout.mobile-mode .table-scroll-container :deep(.table-wrapper) {

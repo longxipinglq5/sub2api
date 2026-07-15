@@ -28,14 +28,18 @@
     <p class="text-sm text-gray-500 dark:text-gray-400">{{ emptyLabel }}</p>
   </div>
 
-  <div v-else class="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+  <div
+    v-else
+    data-testid="channel-card-grid"
+    class="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-2"
+  >
     <article
       v-for="(channel, chIdx) in rows"
       :key="`${channel.name}-${chIdx}`"
-      class="card min-w-0 overflow-hidden transition-colors hover:border-gray-300 dark:hover:border-dark-500"
+      class="card h-full min-w-0 overflow-hidden transition-colors hover:border-gray-300 dark:hover:border-dark-500"
       :aria-label="`${columns.name}: ${channel.name}`"
     >
-      <header class="border-b border-gray-100 px-5 py-4 dark:border-dark-700">
+      <header class="min-h-24 border-b border-gray-100 px-5 py-4 dark:border-dark-700">
         <h2 class="text-base font-semibold text-gray-900 dark:text-white">
           {{ channel.name }}
         </h2>
