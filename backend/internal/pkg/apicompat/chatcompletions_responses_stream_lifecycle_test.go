@@ -214,6 +214,57 @@ func TestStream_ToolCallArgumentsInFirstChunkNotDoubled(t *testing.T) {
 	require.Equal(t, `{"cmd":"ls"}`, argsDelta.String())
 }
 
+func TestStream_CustomToolCallLifecycleUsesFreeformEvents(t *testing.T) {
+	state := NewChatCompletionsToResponsesStreamStateWithTools("gpt-5.6-sol", []ResponsesTool{{Type: "custom", Name: "exec"}})
+	chunks := []string{
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_exec","type":"function","function":{"name":"exec","arguments":""}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"input\":\"const r = await tools.exec_command({cmd: \\\"pwd\\\"}); text(r.output);\"}"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+	}
+
+	var events []ResponsesStreamEvent
+	for _, payload := range chunks {
+		var chunk ChatCompletionsChunk
+		require.NoError(t, json.Unmarshal([]byte(payload), &chunk))
+		events = append(events, ChatCompletionsChunkToResponsesEvents(&chunk, state)...)
+	}
+	events = append(events, FinalizeChatCompletionsResponsesStream(state)...)
+
+	var sawAdded, sawDelta, sawInputDone, sawItemDone bool
+	for _, event := range events {
+		switch event.Type {
+		case "response.output_item.added":
+			if event.Item != nil && event.Item.Name == "exec" {
+				sawAdded = true
+				require.Equal(t, "custom_tool_call", event.Item.Type)
+			}
+		case "response.function_call_arguments.delta", "response.function_call_arguments.done":
+			require.Fail(t, "custom tools must not emit function-call argument events", event.Type)
+		case "response.custom_tool_call_input.delta":
+			sawDelta = true
+			require.Contains(t, event.Delta, `tools.exec_command`)
+		case "response.custom_tool_call_input.done":
+			sawInputDone = true
+			require.Contains(t, event.Input, `tools.exec_command`)
+		case "response.output_item.done":
+			if event.Item != nil && event.Item.Name == "exec" {
+				sawItemDone = true
+				require.Equal(t, "custom_tool_call", event.Item.Type)
+				require.Contains(t, event.Item.Input, `tools.exec_command`)
+			}
+		case "response.completed":
+			require.NotNil(t, event.Response)
+			require.Len(t, event.Response.Output, 1)
+			require.Equal(t, "custom_tool_call", event.Response.Output[0].Type)
+			require.Contains(t, event.Response.Output[0].Input, `tools.exec_command`)
+		}
+	}
+	require.True(t, sawAdded)
+	require.True(t, sawDelta)
+	require.True(t, sawInputDone)
+	require.True(t, sawItemDone)
+}
+
 // TestStream_SSEWireComplete drives the full stream through SSE encoding and
 // asserts the function_call events carry complete fields on the wire.
 func TestStream_SSEWireComplete(t *testing.T) {

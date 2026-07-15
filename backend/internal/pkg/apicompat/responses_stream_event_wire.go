@@ -86,6 +86,17 @@ func (e ResponsesStreamEvent) MarshalJSON() ([]byte, error) {
 		}
 		return json.Marshal(m)
 
+	case "response.custom_tool_call_input.delta", "response.custom_tool_call_input.done":
+		m := e.wireBase()
+		e.putItemID(m)
+		m["output_index"] = e.OutputIndex
+		if e.Type == "response.custom_tool_call_input.done" {
+			m["input"] = e.Input
+		} else {
+			m["delta"] = e.Delta
+		}
+		return json.Marshal(m)
+
 	default:
 		// response.created / completed / done / failed / incomplete and any
 		// event type not shaped above keep the default struct marshalling.
@@ -167,6 +178,10 @@ func responsesItemWire(item *ResponsesOutput) map[string]any {
 		m["call_id"] = item.CallID
 		m["name"] = item.Name
 		m["arguments"] = item.Arguments
+	case "custom_tool_call":
+		m["call_id"] = item.CallID
+		m["name"] = item.Name
+		m["input"] = item.Input
 	}
 	return m
 }

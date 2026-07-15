@@ -102,6 +102,96 @@ func TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions(t
 	require.NotNil(t, result.FirstTokenMs)
 }
 
+func TestForwardResponses_ForceChatCompletionsPreservesCustomToolCall(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{
+		"model":"gpt-5.6-sol",
+		"input":"Only use exec to run pwd.",
+		"tools":[{"type":"custom","name":"exec","description":"Run code in the local tool runtime."}],
+		"tool_choice":{"type":"custom","name":"exec"},
+		"stream":false
+	}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_custom","object":"chat.completion","model":"gpt-5.6-sol","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"call_exec","type":"function","function":{"name":"exec","arguments":"{\"input\":\"const r = await tools.exec_command({cmd: \\\"pwd\\\"}); text(r.output);\"}"}}]},"finish_reason":"tool_calls"}]}`,
+		)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "function", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
+	require.Equal(t, "exec", gjson.GetBytes(upstream.lastBody, "tools.0.function.name").String())
+	require.Equal(t, "string", gjson.GetBytes(upstream.lastBody, "tools.0.function.parameters.properties.input.type").String())
+	require.Equal(t, "exec", gjson.GetBytes(upstream.lastBody, "tool_choice.function.name").String())
+	require.Equal(t, "custom_tool_call", gjson.Get(rec.Body.String(), "output.0.type").String())
+	require.Equal(t, "call_exec", gjson.Get(rec.Body.String(), "output.0.call_id").String())
+	require.Equal(t, "exec", gjson.Get(rec.Body.String(), "output.0.name").String())
+	require.Contains(t, gjson.Get(rec.Body.String(), "output.0.input").String(), "tools.exec_command")
+}
+
+func TestForwardResponses_ForceChatCompletionsStreamsCustomToolLifecycle(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{
+		"model":"gpt-5.6-sol",
+		"input":"Only use exec to run pwd.",
+		"tools":[{"type":"custom","name":"exec","description":"Run code in the local tool runtime."}],
+		"stream":true
+	}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_custom_stream","object":"chat.completion.chunk","model":"gpt-5.6-sol","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_exec","type":"function","function":{"name":"exec","arguments":""}}]},"finish_reason":null}]}`,
+		"",
+		`data: {"id":"chatcmpl_custom_stream","object":"chat.completion.chunk","model":"gpt-5.6-sol","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"input\":\"const r = await tools.exec_command({cmd: \\\"pwd\\\"}); text(r.output);\"}"}}]},"finish_reason":null}]}`,
+		"",
+		`data: {"id":"chatcmpl_custom_stream","object":"chat.completion.chunk","model":"gpt-5.6-sol","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		"",
+		`data: [DONE]`,
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.Stream)
+	require.Equal(t, "function", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
+	responseBody := rec.Body.String()
+	require.Contains(t, responseBody, "event: response.output_item.added")
+	require.Contains(t, responseBody, `"type":"custom_tool_call"`)
+	require.Contains(t, responseBody, "event: response.custom_tool_call_input.delta")
+	require.Contains(t, responseBody, "event: response.custom_tool_call_input.done")
+	require.Contains(t, responseBody, `"input":"const r = await tools.exec_command`)
+	require.Contains(t, responseBody, "event: response.completed")
+	require.NotContains(t, responseBody, "event: response.function_call_arguments.delta")
+	require.NotContains(t, responseBody, "event: response.function_call_arguments.done")
+}
+
 func TestForwardResponses_DeepSeekReasoningOnlyStreamProducesVisibleText(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
