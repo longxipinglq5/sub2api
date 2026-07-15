@@ -389,7 +389,7 @@ export default {
     users: '用户管理',
     groups: '分组管理',
     channels: '渠道管理',
-    availableChannels: '可用渠道',
+    availableChannels: '大模型广场',
     subscriptions: '订阅管理',
     accounts: '账号管理',
     proxies: 'IP管理',
@@ -415,7 +415,7 @@ export default {
     channelManagement: '渠道管理',
     channelPricing: '渠道定价',
     channelMonitor: '渠道监控',
-    channelStatus: '渠道状态',
+    channelStatus: '服务状态',
     riskControl: '风控中心',
   },
 
@@ -1040,11 +1040,11 @@ export default {
 
   // Channel Status (user-facing read-only view)
   channelStatus: {
-    title: '渠道状态',
-    description: '查看渠道可用性、延迟和近期状态',
-    searchPlaceholder: '搜索渠道...',
+    title: '服务状态',
+    description: '查看模型服务的可用性、延迟和近期运行状态',
+    searchPlaceholder: '搜索服务或模型...',
     allProviders: '全部供应商',
-    loadError: '加载渠道状态失败',
+    loadError: '加载服务状态失败',
     detailLoadError: '加载渠道详情失败',
     detailTitle: '渠道详情',
     closeDetail: '关闭',
@@ -1083,10 +1083,10 @@ export default {
 
   // Available Channels (user-facing)
   availableChannels: {
-    title: '可用渠道',
-    description: '查看您可访问的渠道与其支持的模型、定价',
-    searchPlaceholder: '搜索渠道或模型...',
-    empty: '暂无可用渠道',
+    title: '大模型广场',
+    description: '浏览您可使用的模型、服务平台与价格',
+    searchPlaceholder: '搜索模型、平台或渠道...',
+    empty: '暂无可用模型',
     noModels: '未配置模型',
     noPricing: '未配置定价',
     exclusive: '专属',
@@ -2427,7 +2427,7 @@ export default {
 
     // Available Channels (aggregated read-only view)
     availableChannels: {
-      title: '可用渠道',
+      title: '大模型广场',
       description: '按渠道聚合查看关联分组与支持模型（已展开通配符）',
       searchPlaceholder: '搜索渠道或模型...',
       columns: {
@@ -5672,10 +5672,10 @@ export default {
           defaultIntervalHint: '新建渠道监控时表单的默认值，可被单个渠道覆盖。范围 15 – 3600 秒。',
         },
         availableChannels: {
-          title: '可用渠道',
-          description: '向已登录用户展示他们能访问的渠道、模型和定价聚合视图。默认关闭。',
+          title: '大模型广场',
+          description: '向已登录用户展示他们可使用的模型、服务平台和定价。默认关闭。',
           configureLink: '前往 渠道管理 > 渠道定价 配置模型价格',
-          enabled: '启用可用渠道',
+          enabled: '启用大模型广场',
           enabledHint: '关闭后用户端侧边栏入口隐藏，接口返回空数组。',
         },
         riskControl: {
