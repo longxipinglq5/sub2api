@@ -12,6 +12,7 @@ import (
 
 	coderws "github.com/coder/websocket"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 type FrameConn interface {
@@ -21,11 +22,15 @@ type FrameConn interface {
 }
 
 type Usage struct {
-	InputTokens              int
-	OutputTokens             int
-	CacheCreationInputTokens int
-	CacheReadInputTokens     int
-	ImageOutputTokens        int
+	InputTokens                             int
+	AudioInputTokens                        int
+	OutputTokens                            int
+	AudioOutputTokens                       int
+	CacheCreationInputTokens                int
+	CacheCreationInputTokensIncludedInInput bool
+	CacheReadInputTokens                    int
+	CacheReadAudioInputTokens               int
+	ImageOutputTokens                       int
 }
 
 type RelayResult struct {
@@ -125,6 +130,11 @@ func Relay(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	var sanitizeErr error
+	firstClientMessage, sanitizeErr = SanitizeResponseCreate(firstClientMessage, result.RequestModel)
+	if sanitizeErr != nil {
+		return result, &RelayExit{Stage: "sanitize_client_message", Err: sanitizeErr}
+	}
 
 	nowFn := options.Now
 	if nowFn == nil {
@@ -211,7 +221,7 @@ func Relay(
 		if !clientReaderStarted.CompareAndSwap(false, true) {
 			return
 		}
-		go runClientToUpstream(relayCtx, clientConn, options.ReadClientFrame, writeUpstream, markActivity, clientToUpstreamFrames, onTrace, exitCh)
+		go runClientToUpstream(relayCtx, clientConn, options.ReadClientFrame, writeUpstream, markActivity, result.RequestModel, clientToUpstreamFrames, onTrace, exitCh)
 	}
 	if !options.StartClientAfterFirstDownstream {
 		startClientReader()
@@ -372,6 +382,7 @@ func runClientToUpstream(
 	readClientFrame func(context.Context, FrameConn) (coderws.MessageType, []byte, error),
 	writeUpstream func(msgType coderws.MessageType, payload []byte) error,
 	markActivity func(),
+	requestModel string,
 	forwardedFrames *atomic.Int64,
 	onTrace func(event RelayTraceEvent),
 	exitCh chan<- relayExitSignal,
@@ -381,6 +392,7 @@ func runClientToUpstream(
 			return conn.ReadFrame(ctx)
 		}
 	}
+	currentModel := strings.TrimSpace(requestModel)
 	for {
 		msgType, payload, err := readClientFrame(ctx, clientConn)
 		if err != nil {
@@ -394,6 +406,31 @@ func runClientToUpstream(
 			return
 		}
 		markActivity()
+		if msgType == coderws.MessageText {
+			frameType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
+			frameModel := ""
+			switch frameType {
+			case "response.create":
+				frameModel = strings.TrimSpace(gjson.GetBytes(payload, "model").String())
+			case "session.update":
+				frameModel = strings.TrimSpace(gjson.GetBytes(payload, "session.model").String())
+			}
+			if frameModel != "" {
+				currentModel = frameModel
+			}
+			payload, err = SanitizeResponseCreate(payload, currentModel)
+			if err != nil {
+				emitRelayTrace(onTrace, RelayTraceEvent{
+					Stage:        "sanitize_client_message_failed",
+					Direction:    "client_to_upstream",
+					MessageType:  relayMessageTypeString(msgType),
+					PayloadBytes: len(payload),
+					Error:        err.Error(),
+				})
+				exitCh <- relayExitSignal{stage: "sanitize_client_message", err: err}
+				return
+			}
+		}
 		if err := writeUpstream(msgType, payload); err != nil {
 			emitRelayTrace(onTrace, RelayTraceEvent{
 				Stage:        "write_upstream_failed",
@@ -410,6 +447,67 @@ func runClientToUpstream(
 		}
 		markActivity()
 	}
+}
+
+// SanitizeResponseCreate removes parameters unsupported by GPT-6 Astra.
+// model is the authoritative mapped/session model when available; payload.model
+// is used only when callers cannot provide that context.
+func SanitizeResponseCreate(payload []byte, model string) ([]byte, error) {
+	if len(payload) == 0 || strings.TrimSpace(gjson.GetBytes(payload, "type").String()) != "response.create" {
+		return payload, nil
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		model = strings.TrimSpace(gjson.GetBytes(payload, "model").String())
+	}
+	if !isGPT6AstraModel(model) {
+		return payload, nil
+	}
+
+	normalized := payload
+	for _, field := range []string{"temperature", "top_p", "top_logprobs"} {
+		if !gjson.GetBytes(normalized, field).Exists() {
+			continue
+		}
+		next, err := sjson.DeleteBytes(normalized, field)
+		if err != nil {
+			return payload, err
+		}
+		normalized = next
+	}
+
+	effort := strings.ToLower(strings.TrimSpace(gjson.GetBytes(normalized, "reasoning.effort").String()))
+	if effort == "none" || effort == "minimal" {
+		next, err := sjson.SetBytes(normalized, "reasoning.effort", "low")
+		if err != nil {
+			return payload, err
+		}
+		normalized = next
+	}
+
+	include := gjson.GetBytes(normalized, "include")
+	if include.IsArray() {
+		items := include.Array()
+		for index := len(items) - 1; index >= 0; index-- {
+			if items[index].String() != "message.output_text.logprobs" {
+				continue
+			}
+			next, err := sjson.DeleteBytes(normalized, "include."+strconv.Itoa(index))
+			if err != nil {
+				return payload, err
+			}
+			normalized = next
+		}
+	}
+	return normalized, nil
+}
+
+func isGPT6AstraModel(model string) bool {
+	model = strings.TrimSpace(model)
+	if slash := strings.LastIndex(model, "/"); slash >= 0 {
+		model = strings.TrimSpace(model[slash+1:])
+	}
+	return strings.EqualFold(model, "gpt-6-astra")
 }
 
 func runUpstreamToClient(
@@ -772,6 +870,18 @@ func parseUsageAndAccumulate(
 	if imageTokens == 0 {
 		imageTokens = usageResult.Get("completion_tokens_details.image_tokens").Int()
 	}
+	audioInputTokens := usageResult.Get("input_tokens_details.audio_tokens").Int()
+	if audioInputTokens == 0 {
+		audioInputTokens = usageResult.Get("prompt_tokens_details.audio_tokens").Int()
+	}
+	audioOutputTokens := usageResult.Get("output_tokens_details.audio_tokens").Int()
+	if audioOutputTokens == 0 {
+		audioOutputTokens = usageResult.Get("completion_tokens_details.audio_tokens").Int()
+	}
+	cacheReadAudioTokens := usageResult.Get("input_tokens_details.cached_tokens_details.audio_tokens").Int()
+	if cacheReadAudioTokens == 0 {
+		cacheReadAudioTokens = usageResult.Get("prompt_tokens_details.cached_tokens_details.audio_tokens").Int()
+	}
 
 	inputTokens, inputOK := parseUsageIntField(inputResult, true)
 	outputTokens, outputOK := parseUsageIntField(outputResult, true)
@@ -784,18 +894,39 @@ func parseUsageAndAccumulate(
 		// 解析失败时不做部分字段累加，避免计费 usage 出现“半有效”状态。
 		return Usage{}
 	}
+	cacheCreationInputTokens := usageResult.Get("input_tokens_details.cache_write_tokens")
+	cacheCreationIncludedInInput := cacheCreationInputTokens.Exists()
+	if !cacheCreationIncludedInInput {
+		cacheCreationInputTokens = usageResult.Get("prompt_tokens_details.cache_write_tokens")
+		cacheCreationIncludedInInput = cacheCreationInputTokens.Exists()
+	}
+	if !cacheCreationIncludedInInput {
+		cacheCreationInputTokens = usageResult.Get("cache_creation_input_tokens")
+		if !cacheCreationInputTokens.Exists() {
+			cacheCreationInputTokens = usageResult.Get("cache_write_tokens")
+		}
+	}
+
 	parsedUsage := Usage{
-		InputTokens:              inputTokens,
-		OutputTokens:             outputTokens,
-		CacheCreationInputTokens: int(usageResult.Get("cache_creation_input_tokens").Int()),
-		CacheReadInputTokens:     cachedTokens,
-		ImageOutputTokens:        int(imageTokens),
+		InputTokens:                             inputTokens,
+		AudioInputTokens:                        int(audioInputTokens),
+		OutputTokens:                            outputTokens,
+		AudioOutputTokens:                       int(audioOutputTokens),
+		CacheCreationInputTokens:                int(cacheCreationInputTokens.Int()),
+		CacheCreationInputTokensIncludedInInput: cacheCreationIncludedInInput,
+		CacheReadInputTokens:                    cachedTokens,
+		CacheReadAudioInputTokens:               int(cacheReadAudioTokens),
+		ImageOutputTokens:                       int(imageTokens),
 	}
 
 	state.usage.InputTokens += parsedUsage.InputTokens
+	state.usage.AudioInputTokens += parsedUsage.AudioInputTokens
 	state.usage.OutputTokens += parsedUsage.OutputTokens
+	state.usage.AudioOutputTokens += parsedUsage.AudioOutputTokens
 	state.usage.CacheCreationInputTokens += parsedUsage.CacheCreationInputTokens
+	state.usage.CacheCreationInputTokensIncludedInInput = state.usage.CacheCreationInputTokensIncludedInInput || parsedUsage.CacheCreationInputTokensIncludedInInput
 	state.usage.CacheReadInputTokens += parsedUsage.CacheReadInputTokens
+	state.usage.CacheReadAudioInputTokens += parsedUsage.CacheReadAudioInputTokens
 	state.usage.ImageOutputTokens += parsedUsage.ImageOutputTokens
 	return parsedUsage
 }

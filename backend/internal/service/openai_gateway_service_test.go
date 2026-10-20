@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/cespare/xxhash/v2"
 	"github.com/gin-gonic/gin"
@@ -1510,6 +1511,82 @@ func TestOpenAIStreamingPreambleKeepaliveUsesDownstreamIdle(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "response.completed")
 }
 
+func TestOpenAIStreamingCapacityErrorAfterKeepaliveReturnsFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   1,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	pr, pw := io.Pipe()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       pr,
+		Header:     http.Header{"X-Request-Id": []string{"rid-capacity-after-keepalive"}},
+	}
+
+	go func() {
+		defer func() { _ = pw.Close() }()
+		_, _ = pw.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_keepalive\"}}\n\n"))
+		time.Sleep(1500 * time.Millisecond)
+		_, _ = pw.Write([]byte("data: {\"type\":\"response.failed\",\"error\":{\"message\":\"Selected model is at capacity. Please try a different model.\",\"type\":\"invalid_request_error\"}}\n\n"))
+	}()
+
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
+	_ = pr.Close()
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.True(t, failoverErr.RetryableAfterKeepalive)
+	require.Equal(t, ":\n\n", rec.Body.String())
+	require.NotContains(t, rec.Body.String(), "response.created")
+	require.NotContains(t, rec.Body.String(), "response.failed")
+}
+
+func TestOpenAIStreamingCapacityErrorAfterSemanticOutputDoesNotFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"type":"response.created","response":{"id":"resp_output"}}`,
+			"",
+			`data: {"type":"response.output_text.delta","delta":"partial"}`,
+			"",
+			`data: {"type":"response.failed","error":{"message":"Selected model is at capacity. Please try a different model.","type":"invalid_request_error"}}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-capacity-after-output"}},
+	}
+
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	require.Contains(t, rec.Body.String(), "partial")
+	require.Contains(t, rec.Body.String(), "Selected model is at capacity")
+}
+
 func TestOpenAIStreamingNormalizesTerminalOutputFromDeltas(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
@@ -1663,11 +1740,97 @@ func TestOpenAIStreamingClientDisconnectDrainsUpstreamUsage(t *testing.T) {
 	if result == nil || result.usage == nil {
 		t.Fatalf("expected usage result")
 	}
+	require.True(t, result.clientDisconnect)
+	disconnected, _ := c.Request.Context().Value(ctxkey.DownstreamClientDisconnected).(bool)
+	require.True(t, disconnected)
 	if result.usage.InputTokens != 3 || result.usage.OutputTokens != 5 || result.usage.CacheReadInputTokens != 1 {
 		t.Fatalf("unexpected usage: %+v", *result.usage)
 	}
 	if strings.Contains(rec.Body.String(), "event: error") || strings.Contains(rec.Body.String(), "write_failed") {
 		t.Fatalf("expected no injected SSE error event, got %q", rec.Body.String())
+	}
+}
+
+func TestOpenAIForwardClientDisconnectPreservesResultWhenUpstreamReadFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name        string
+		account     *Account
+		requestBody []byte
+	}{
+		{
+			name: "native responses",
+			account: &Account{
+				ID:          101,
+				Name:        "native-responses",
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Concurrency: 1,
+				Credentials: map[string]any{
+					"api_key":  "sk-test",
+					"base_url": "http://upstream.example",
+				},
+			},
+			requestBody: []byte(`{"model":"gpt-5.4","stream":true,"input":"hello"}`),
+		},
+		{
+			name: "oauth passthrough",
+			account: &Account{
+				ID:          102,
+				Name:        "oauth-passthrough",
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeOAuth,
+				Concurrency: 1,
+				Credentials: map[string]any{
+					"access_token":       "oauth-token",
+					"chatgpt_account_id": "chatgpt-account",
+				},
+				Extra: map[string]any{"openai_passthrough": true},
+			},
+			requestBody: []byte(`{"model":"gpt-5.4","stream":true,"input":"hello"}`),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(tt.requestBody))
+			c.Writer = &failingGinWriter{ResponseWriter: c.Writer, failAfter: 1}
+
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header: http.Header{
+					"Content-Type": []string{"text/event-stream"},
+					"X-Request-Id": []string{"rid-disconnect-read-error"},
+				},
+				Body: &streamReadCloser{
+					payload: []byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"),
+					err:     io.ErrUnexpectedEOF,
+				},
+			}}
+			svc := &OpenAIGatewayService{
+				cfg: &config.Config{
+					Security: config.SecurityConfig{
+						URLAllowlist: config.URLAllowlistConfig{
+							Enabled:           false,
+							AllowInsecureHTTP: true,
+						},
+					},
+				},
+				httpUpstream: upstream,
+			}
+
+			result, err := svc.Forward(context.Background(), c, tt.account, tt.requestBody)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "stream usage incomplete after disconnect")
+			require.NotNil(t, result)
+			require.True(t, result.ClientDisconnect)
+			require.Equal(t, "rid-disconnect-read-error", result.RequestID)
+			disconnected, _ := c.Request.Context().Value(ctxkey.DownstreamClientDisconnected).(bool)
+			require.True(t, disconnected)
+		})
 	}
 }
 
@@ -1769,6 +1932,47 @@ func TestOpenAIStreamingPassthroughResponseFailedBeforeOutputReturnsFailover(t *
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.Contains(t, string(failoverErr.ResponseBody), "upstream processing failed")
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
+}
+
+func TestOpenAIStreamingPassthroughResponseFailedAfterStructuralEventsReturnsFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{cfg: &config.Config{
+		Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize},
+	}}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_structural_failed"}}`,
+			"",
+			"event: response.output_item.added",
+			`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"item_1","type":"message","role":"assistant","status":"in_progress"}}`,
+			"",
+			"event: response.content_part.added",
+			`data: {"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text","text":""}}`,
+			"",
+			"event: response.reasoning_summary_part.added",
+			`data: {"type":"response.reasoning_summary_part.added","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}`,
+			"",
+			"event: response.failed",
+			`data: {"type":"response.failed","response":{"error":{"type":"invalid_request_error","message":"Our servers are currently overloaded. Please try again later."}}}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-structural-failed"}},
+	}
+
+	_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "", "")
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Contains(t, string(failoverErr.ResponseBody), "currently overloaded")
 	require.False(t, c.Writer.Written())
 	require.Empty(t, rec.Body.String())
 }
@@ -1988,6 +2192,35 @@ func TestOpenAINonStreamingContentTypeDefault(t *testing.T) {
 	if !strings.Contains(rec.Header().Get("Content-Type"), "application/json") {
 		t.Fatalf("expected default Content-Type, got %q", rec.Header().Get("Content-Type"))
 	}
+}
+
+func TestHandleNonStreamingResponse_ParsesNestedCacheWriteUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	body := []byte(`{"usage":{"input_tokens":100,"output_tokens":5,"input_tokens_details":{"cached_tokens":20,"cache_write_tokens":10},"cache_creation_input_tokens":99}}`)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}
+
+	result, err := (&OpenAIGatewayService{cfg: &config.Config{}}).handleNonStreamingResponse(
+		c.Request.Context(),
+		resp,
+		c,
+		&Account{},
+		"gpt-6-astra",
+		"gpt-6-astra",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 100, result.InputTokens)
+	require.Equal(t, 20, result.CacheReadInputTokens)
+	require.Equal(t, 10, result.CacheCreationInputTokens)
+	require.True(t, result.CacheCreationInputTokensIncludedInInput)
 }
 
 func TestOpenAIStreamingHeadersOverride(t *testing.T) {
@@ -2627,10 +2860,12 @@ func TestParseSSEUsage_SelectiveParsing(t *testing.T) {
 	require.Equal(t, 19, usage.OutputTokens)
 	require.Equal(t, 6, usage.CacheReadInputTokens)
 
-	svc.parseSSEUsage(`{"type":"response.completed","response":{"usage":{"prompt_tokens":21,"completion_tokens":8,"prompt_tokens_details":{"cached_tokens":6}}}}`, usage)
+	svc.parseSSEUsage(`{"type":"response.completed","response":{"usage":{"prompt_tokens":21,"completion_tokens":8,"prompt_tokens_details":{"cached_tokens":6,"cache_write_tokens":4},"cache_creation_input_tokens":9}}}`, usage)
 	require.Equal(t, 21, usage.InputTokens)
 	require.Equal(t, 8, usage.OutputTokens)
 	require.Equal(t, 6, usage.CacheReadInputTokens)
+	require.Equal(t, 4, usage.CacheCreationInputTokens)
+	require.True(t, usage.CacheCreationInputTokensIncludedInInput)
 }
 
 func TestExtractOpenAIUsageFromJSONBytes_AcceptsResponseAndChatUsageShapes(t *testing.T) {
@@ -2645,6 +2880,34 @@ func TestExtractOpenAIUsageFromJSONBytes_AcceptsResponseAndChatUsageShapes(t *te
 	require.Equal(t, 13, usage.InputTokens)
 	require.Equal(t, 7, usage.OutputTokens)
 	require.Equal(t, 4, usage.CacheReadInputTokens)
+
+	t.Run("nested input details take priority", func(t *testing.T) {
+		usage, ok := extractOpenAIUsageFromJSONBytes([]byte(`{"usage":{"input_tokens":30,"output_tokens":5,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":7},"cache_creation_input_tokens":11,"cache_write_tokens":13}}`))
+		require.True(t, ok)
+		require.Equal(t, 7, usage.CacheCreationInputTokens)
+		require.True(t, usage.CacheCreationInputTokensIncludedInInput)
+	})
+
+	t.Run("nested zero still takes priority over legacy", func(t *testing.T) {
+		usage, ok := extractOpenAIUsageFromJSONBytes([]byte(`{"usage":{"input_tokens":30,"output_tokens":5,"input_tokens_details":{"cache_write_tokens":0},"cache_creation_input_tokens":11}}`))
+		require.True(t, ok)
+		require.Zero(t, usage.CacheCreationInputTokens)
+		require.True(t, usage.CacheCreationInputTokensIncludedInInput)
+	})
+
+	t.Run("legacy cache creation fallback preserves provenance", func(t *testing.T) {
+		usage, ok := extractOpenAIUsageFromJSONBytes([]byte(`{"usage":{"input_tokens":30,"output_tokens":5,"cache_creation_input_tokens":11,"cache_write_tokens":13}}`))
+		require.True(t, ok)
+		require.Equal(t, 11, usage.CacheCreationInputTokens)
+		require.False(t, usage.CacheCreationInputTokensIncludedInInput)
+	})
+
+	t.Run("legacy cache write alias fallback", func(t *testing.T) {
+		usage, ok := extractOpenAIUsageFromJSONBytes([]byte(`{"usage":{"input_tokens":30,"output_tokens":5,"cache_write_tokens":13}}`))
+		require.True(t, ok)
+		require.Equal(t, 13, usage.CacheCreationInputTokens)
+		require.False(t, usage.CacheCreationInputTokensIncludedInInput)
+	})
 }
 
 func TestExtractCodexFinalResponse_SampleReplay(t *testing.T) {

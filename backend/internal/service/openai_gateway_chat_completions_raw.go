@@ -105,6 +105,11 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		return nil, policyErr
 	}
 	upstreamBody = updatedBody
+	if compatibleBody, injected := ensureGPT56ChatCompletionsToolReasoningNone(upstreamBody, upstreamModel); injected {
+		upstreamBody = compatibleBody
+		injectedEffort := "none"
+		reasoningEffort = &injectedEffort
+	}
 	if clientStream {
 		var usageErr error
 		upstreamBody, usageErr = ensureOpenAIChatStreamUsage(upstreamBody)
@@ -246,6 +251,45 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		return s.streamRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, len(body))
 	}
 	return s.bufferRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+}
+
+// ensureGPT56ChatCompletionsToolReasoningNone preserves function-tool support
+// for GPT-5.6 clients that cannot express the required "none" effort. The
+// compatibility default is intentionally limited to raw Chat Completions
+// forwarding and never overrides an explicit client effort.
+func ensureGPT56ChatCompletionsToolReasoningNone(body []byte, model string) ([]byte, bool) {
+	if !shouldDefaultGPT56FunctionToolReasoningNone(body, model) {
+		return body, false
+	}
+
+	updated, err := sjson.SetBytes(body, "reasoning_effort", "none")
+	if err != nil {
+		return body, false
+	}
+	return updated, true
+}
+
+func shouldDefaultGPT56FunctionToolReasoningNone(body []byte, model string) bool {
+	normalizedModel := strings.ToLower(strings.TrimSpace(model))
+	if normalizedModel != "gpt-5.6" && !strings.HasPrefix(normalizedModel, "gpt-5.6-") {
+		return false
+	}
+	if strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String()) != "" ||
+		strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String()) != "" {
+		return false
+	}
+
+	tools := gjson.GetBytes(body, "tools")
+	if !tools.IsArray() {
+		return false
+	}
+	for _, tool := range tools.Array() {
+		toolType := strings.ToLower(strings.TrimSpace(tool.Get("type").String()))
+		if toolType == "function" || (toolType == "" && tool.Get("function").Exists()) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *OpenAIGatewayService) rawChatCompletionsURL(account *Account) (string, error) {

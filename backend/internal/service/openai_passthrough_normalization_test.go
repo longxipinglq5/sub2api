@@ -7,6 +7,20 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func TestNormalizeGPT6AstraPassthroughBody(t *testing.T) {
+	body := []byte(`{"model":"gpt-6-astra","input":"hello","temperature":0.7,"top_p":0.9,"top_logprobs":3,"reasoning":{"effort":"minimal"},"include":["reasoning.encrypted_content","message.output_text.logprobs"]}`)
+
+	normalized, changed, err := normalizeGPT6AstraPassthroughBody(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(normalized, "temperature").Exists())
+	require.False(t, gjson.GetBytes(normalized, "top_p").Exists())
+	require.False(t, gjson.GetBytes(normalized, "top_logprobs").Exists())
+	require.Equal(t, "low", gjson.GetBytes(normalized, "reasoning.effort").String())
+	require.Equal(t, []string{"reasoning.encrypted_content"}, []string{gjson.GetBytes(normalized, "include.0").String()})
+	require.Len(t, gjson.GetBytes(normalized, "include").Array(), 1)
+}
+
 func TestNormalizeOpenAIPassthroughOAuthBody_RemovesUnsupportedUser(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"hello","user":"user_123","metadata":{"user_id":"user_123"},"prompt_cache_retention":"24h","safety_identifier":"sid","stream_options":{"include_usage":true}}`)
 

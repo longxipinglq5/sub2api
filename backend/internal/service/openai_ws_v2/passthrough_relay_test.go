@@ -223,6 +223,33 @@ func TestRelay_FunctionCallOutputBytesPreserved(t *testing.T) {
 	require.Equal(t, firstPayload, upstreamWrites[0].payload)
 }
 
+func TestRelay_GPT6AstraSanitizesFirstResponseCreateAndParsesNestedCacheWrite(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{
+			msgType: coderws.MessageText,
+			payload: []byte(`{"type":"response.completed","response":{"id":"resp_astra","usage":{"input_tokens":20,"output_tokens":4,"input_tokens_details":{"cached_tokens":3,"cache_write_tokens":5},"cache_creation_input_tokens":99}}}`),
+		},
+	}, true)
+
+	firstPayload := []byte(`{"type":"response.create","model":"gpt-6-astra","input":"hello","temperature":0.7,"top_p":0.8,"top_logprobs":2,"reasoning":{"effort":"minimal"},"include":["reasoning.encrypted_content","message.output_text.logprobs"]}`)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
+	require.Nil(t, relayExit)
+	require.Equal(t, 20, result.Usage.InputTokens)
+	require.Equal(t, 3, result.Usage.CacheReadInputTokens)
+	require.Equal(t, 5, result.Usage.CacheCreationInputTokens)
+	require.True(t, result.Usage.CacheCreationInputTokensIncludedInInput)
+
+	upstreamWrites := upstreamConn.Writes()
+	require.Len(t, upstreamWrites, 1)
+	require.JSONEq(t, `{"type":"response.create","model":"gpt-6-astra","input":"hello","reasoning":{"effort":"low"},"include":["reasoning.encrypted_content"]}`, string(upstreamWrites[0].payload))
+}
+
 func TestRelay_UpstreamDisconnect(t *testing.T) {
 	t.Parallel()
 

@@ -18,6 +18,7 @@ func TestParsePricingData_ParsesPriorityAndServiceTierFields(t *testing.T) {
 			"output_cost_per_token": 0.000015,
 			"output_cost_per_token_priority": 0.00003,
 			"cache_creation_input_token_cost": 0.0000025,
+			"cache_creation_input_token_cost_priority": 0.000005,
 			"cache_read_input_token_cost": 0.00000025,
 			"cache_read_input_token_cost_priority": 0.0000005,
 			"supports_service_tier": true,
@@ -33,6 +34,7 @@ func TestParsePricingData_ParsesPriorityAndServiceTierFields(t *testing.T) {
 	require.NotNil(t, pricing)
 	require.InDelta(t, 5e-6, pricing.InputCostPerTokenPriority, 1e-12)
 	require.InDelta(t, 3e-5, pricing.OutputCostPerTokenPriority, 1e-12)
+	require.InDelta(t, 5e-6, pricing.CacheCreationInputTokenCostPriority, 1e-12)
 	require.InDelta(t, 5e-7, pricing.CacheReadInputTokenCostPriority, 1e-12)
 	require.True(t, pricing.SupportsServiceTier)
 }
@@ -98,6 +100,48 @@ func TestGetModelPricing_Gpt54UsesStaticFallbackWhenRemoteMissing(t *testing.T) 
 	require.Equal(t, 272000, got.LongContextInputTokenThreshold)
 	require.InDelta(t, 2.0, got.LongContextInputCostMultiplier, 1e-12)
 	require.InDelta(t, 1.5, got.LongContextOutputCostMultiplier, 1e-12)
+}
+
+func TestGetModelPricing_GPT6AstraUsesExactStaticFallbackWhenRemoteMissing(t *testing.T) {
+	svc := &PricingService{
+		pricingData: map[string]*LiteLLMModelPricing{
+			"gpt-5.1-codex": {InputCostPerToken: 1.25e-6},
+		},
+	}
+
+	got := svc.GetModelPricing("gpt-6-astra")
+	require.NotNil(t, got)
+	require.InDelta(t, 10e-6, got.InputCostPerToken, 1e-12)
+	require.InDelta(t, 20e-6, got.InputCostPerTokenPriority, 1e-12)
+	require.InDelta(t, 50e-6, got.OutputCostPerToken, 1e-12)
+	require.InDelta(t, 100e-6, got.OutputCostPerTokenPriority, 1e-12)
+	require.InDelta(t, 12.5e-6, got.CacheCreationInputTokenCost, 1e-12)
+	require.InDelta(t, 25e-6, got.CacheCreationInputTokenCostPriority, 1e-12)
+	require.InDelta(t, 1e-6, got.CacheReadInputTokenCost, 1e-12)
+	require.InDelta(t, 2e-6, got.CacheReadInputTokenCostPriority, 1e-12)
+	require.Equal(t, 272000, got.LongContextInputTokenThreshold)
+	require.InDelta(t, 2.0, got.LongContextInputCostMultiplier, 1e-12)
+	require.InDelta(t, 1.5, got.LongContextOutputCostMultiplier, 1e-12)
+
+	nonExact := svc.GetModelPricing("gpt-6-astra-preview")
+	require.NotSame(t, openAIGPT6AstraFallbackPricing, nonExact)
+}
+
+func TestDefaultPricingIncludesGPT6Astra(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "resources", "model-pricing", "model_prices_and_context_window.json"))
+	require.NoError(t, err)
+
+	svc := &PricingService{}
+	pricingData, err := svc.parsePricingData(data)
+	require.NoError(t, err)
+	got := pricingData["gpt-6-astra"]
+	require.NotNil(t, got)
+	require.InDelta(t, 10e-6, got.InputCostPerToken, 1e-12)
+	require.InDelta(t, 20e-6, got.InputCostPerTokenPriority, 1e-12)
+	require.InDelta(t, 12.5e-6, got.CacheCreationInputTokenCost, 1e-12)
+	require.InDelta(t, 25e-6, got.CacheCreationInputTokenCostPriority, 1e-12)
+	require.InDelta(t, 1e-6, got.CacheReadInputTokenCost, 1e-12)
+	require.InDelta(t, 2e-6, got.CacheReadInputTokenCostPriority, 1e-12)
 }
 
 func TestGetModelPricing_OpenAICompactAliasUsesStaticFallback(t *testing.T) {

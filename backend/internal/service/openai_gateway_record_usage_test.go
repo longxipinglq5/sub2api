@@ -246,8 +246,12 @@ func newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo UsageLogReposit
 func expectedOpenAICost(t *testing.T, svc *OpenAIGatewayService, model string, usage OpenAIUsage, multiplier float64) *CostBreakdown {
 	t.Helper()
 
+	actualInputTokens := usage.InputTokens - usage.CacheReadInputTokens
+	if usage.CacheCreationInputTokensIncludedInInput {
+		actualInputTokens -= usage.CacheCreationInputTokens
+	}
 	cost, err := svc.billingService.CalculateCost(model, UsageTokens{
-		InputTokens:         max(usage.InputTokens-usage.CacheReadInputTokens, 0),
+		InputTokens:         max(actualInputTokens, 0),
 		OutputTokens:        usage.OutputTokens,
 		CacheCreationTokens: usage.CacheCreationInputTokens,
 		CacheReadTokens:     usage.CacheReadInputTokens,
@@ -977,6 +981,53 @@ func TestOpenAIGatewayServiceRecordUsage_ClampsActualInputTokensToZero(t *testin
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
 	require.Equal(t, 0, usageRepo.lastLog.InputTokens)
+}
+
+func TestOpenAIGatewayServiceRecordUsage_CacheCreationProvenanceControlsInputDeduction(t *testing.T) {
+	tests := []struct {
+		name            string
+		includedInInput bool
+		wantInputTokens int
+	}{
+		{name: "nested cache write is deducted", includedInInput: true, wantInputTokens: 70},
+		{name: "legacy top-level cache write remains independent", includedInInput: false, wantInputTokens: 80},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+			svc := newOpenAIRecordUsageServiceForTest(
+				usageRepo,
+				&openAIRecordUsageUserRepoStub{},
+				&openAIRecordUsageSubRepoStub{},
+				nil,
+			)
+
+			err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+				Result: &OpenAIForwardResult{
+					RequestID: "resp_cache_creation_provenance",
+					Usage: OpenAIUsage{
+						InputTokens:                             100,
+						OutputTokens:                            5,
+						CacheReadInputTokens:                    20,
+						CacheCreationInputTokens:                10,
+						CacheCreationInputTokensIncludedInInput: tt.includedInInput,
+					},
+					Model:    "gpt-5.1",
+					Duration: time.Second,
+				},
+				APIKey:  &APIKey{ID: 1006, Group: &Group{RateMultiplier: 1}},
+				User:    &User{ID: 2006},
+				Account: &Account{ID: 3006},
+			})
+
+			require.NoError(t, err)
+			require.NotNil(t, usageRepo.lastLog)
+			require.Equal(t, tt.wantInputTokens, usageRepo.lastLog.InputTokens)
+			require.Equal(t, 20, usageRepo.lastLog.CacheReadTokens)
+			require.Equal(t, 10, usageRepo.lastLog.CacheCreationTokens)
+		})
+	}
 }
 
 func TestOpenAIGatewayServiceRecordUsage_Gpt54LongContextBillsWholeSession(t *testing.T) {

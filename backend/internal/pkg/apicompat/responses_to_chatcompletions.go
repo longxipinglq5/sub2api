@@ -119,6 +119,7 @@ type ResponsesEventToChatState struct {
 	Finalized              bool        // true after finish chunk has been emitted
 	NextToolCallIndex      int         // next sequential tool_call index to assign
 	OutputIndexToToolIndex map[int]int // Responses output_index → Chat tool_calls index
+	OutputIndexToToolArgs  map[int]string
 	IncludeUsage           bool
 	Usage                  *ChatUsage
 }
@@ -129,6 +130,7 @@ func NewResponsesEventToChatState() *ResponsesEventToChatState {
 		ID:                     generateChatCmplID(),
 		Created:                time.Now().Unix(),
 		OutputIndexToToolIndex: make(map[int]int),
+		OutputIndexToToolArgs:  make(map[int]string),
 	}
 }
 
@@ -266,12 +268,17 @@ func resToChatHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 	if !ok {
 		return nil
 	}
+	combined, emitted := mergeResponsesToolArgumentDelta(state.OutputIndexToToolArgs[evt.OutputIndex], evt.Delta)
+	state.OutputIndexToToolArgs[evt.OutputIndex] = combined
+	if emitted == "" {
+		return nil
+	}
 
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{
 		ToolCalls: []ChatToolCall{{
 			Index: &idx,
 			Function: ChatFunctionCall{
-				Arguments: evt.Delta,
+				Arguments: emitted,
 			},
 		}},
 	})}
@@ -464,7 +471,10 @@ func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) 
 	case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
 		if event.Delta != "" {
 			if idx, ok := a.outputIndexToFuncIdx[event.OutputIndex]; ok {
-				_, _ = a.funcCalls[idx].Args.WriteString(event.Delta)
+				existing := a.funcCalls[idx].Args.String()
+				combined, _ := mergeResponsesToolArgumentDelta(existing, event.Delta)
+				a.funcCalls[idx].Args.Reset()
+				_, _ = a.funcCalls[idx].Args.WriteString(combined)
 			}
 		}
 	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
@@ -472,6 +482,22 @@ func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) 
 			_, _ = a.reasoning.WriteString(event.Delta)
 		}
 	}
+}
+
+func mergeResponsesToolArgumentDelta(existing, incoming string) (combined string, emitted string) {
+	if incoming == "" {
+		return existing, ""
+	}
+	if existing == "" {
+		return incoming, incoming
+	}
+	if incoming == existing {
+		return existing, ""
+	}
+	if strings.HasPrefix(incoming, existing) {
+		return incoming, incoming[len(existing):]
+	}
+	return existing + incoming, incoming
 }
 
 // HasContent reports whether any content has been accumulated.

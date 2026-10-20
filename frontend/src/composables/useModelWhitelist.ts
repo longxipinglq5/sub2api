@@ -4,6 +4,8 @@
 
 // OpenAI
 const openaiModels = [
+  // GPT-6 系列
+  'gpt-6-astra',
   // GPT-5.2 系列
   'gpt-5.2', 'gpt-5.2-2025-12-11', 'gpt-5.2-chat-latest',
   'gpt-5.2-pro', 'gpt-5.2-pro-2025-12-11',
@@ -13,7 +15,7 @@ const openaiModels = [
   'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-2026-03-05',
   // GPT-5.3 / Codex 系列
   'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'codex-auto-review',
-  'gpt-4o-audio-preview', 'gpt-4o-realtime-preview',
+  'gpt-4o-audio-preview', 'gpt-4o-realtime-preview', 'gpt-realtime', 'gpt-realtime-mini',
   // GPT Image 系列
   'gpt-image-1', 'gpt-image-1.5', 'gpt-image-2'
 ]
@@ -111,11 +113,17 @@ const qwenModels = [
 
 // DeepSeek
 const deepseekModels = [
+  'deepseek-flash',
+  'deepseek-v4-flash',
   'deepseek-chat', 'deepseek-coder', 'deepseek-reasoner',
   'deepseek-v3', 'deepseek-v3-0324',
   'deepseek-r1', 'deepseek-r1-0528',
   'deepseek-r1-distill-qwen-32b', 'deepseek-r1-distill-qwen-14b', 'deepseek-r1-distill-qwen-7b',
   'deepseek-r1-distill-llama-70b', 'deepseek-r1-distill-llama-8b'
+]
+
+const deepseekPresetMappings = [
+  { label: 'DeepSeek V4.1 Flash', from: 'deepseek-flash', to: 'deepseek-flash', color: 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400' }
 ]
 
 // Mistral
@@ -263,6 +271,7 @@ const anthropicPresetMappings = [
 ]
 
 const openaiPresetMappings = [
+  { label: 'GPT-6 Astra', from: 'gpt-6-astra', to: 'gpt-6-astra', color: 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400' },
   { label: 'GPT-4o', from: 'gpt-4o', to: 'gpt-4o', color: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400' },
   { label: 'GPT-4o Mini', from: 'gpt-4o-mini', to: 'gpt-4o-mini', color: 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400' },
   { label: 'GPT-4.1', from: 'gpt-4.1', to: 'gpt-4.1', color: 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400' },
@@ -410,6 +419,7 @@ export function getModelsByPlatform(platform: string): string[] {
 // 按平台获取预设映射
 export function getPresetMappingsByPlatform(platform: string) {
   if (platform === 'openai') return openaiPresetMappings
+  if (platform === 'deepseek') return deepseekPresetMappings
   if (platform === 'gemini') return geminiPresetMappings
   if (platform === 'grok' || platform === 'xai') return grokPresetMappings
   if (platform === 'antigravity') return antigravityPresetMappings

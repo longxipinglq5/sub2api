@@ -11,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 type testLogSink struct {
@@ -209,6 +210,36 @@ func TestLogger_AccessLogUsesForwardedClientIP(t *testing.T) {
 		return
 	}
 	t.Fatalf("access log event not found")
+}
+
+func TestLogger_ClientDisconnectIsWarnAndNotHiddenByHTTP200(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sink := initMiddlewareTestLogger(t)
+
+	r := gin.New()
+	r.Use(RequestLogger())
+	r.Use(Logger())
+	r.GET("/responses", func(c *gin.Context) {
+		ctx := context.WithValue(c.Request.Context(), ctxkey.DownstreamClientDisconnected, true)
+		c.Request = c.Request.WithContext(ctx)
+		c.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/responses", nil)
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	for _, event := range sink.list() {
+		if event == nil || event.Message != "http request completed" {
+			continue
+		}
+		require.Equal(t, "warn", event.Level)
+		require.Equal(t, true, event.Fields["client_disconnected"])
+		require.Equal(t, "client_disconnected", event.Fields["request_outcome"])
+		return
+	}
+	t.Fatal("access log event not found")
 }
 
 func TestLogger_HealthPathSkipped(t *testing.T) {

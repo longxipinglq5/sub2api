@@ -10,6 +10,7 @@ const (
 	OpenAIUpstreamTransportHTTPSSE              OpenAIUpstreamTransport = "http_sse"
 	OpenAIUpstreamTransportResponsesWebsocket   OpenAIUpstreamTransport = "responses_websockets"
 	OpenAIUpstreamTransportResponsesWebsocketV2 OpenAIUpstreamTransport = "responses_websockets_v2"
+	OpenAIUpstreamTransportRealtimeWebsocket    OpenAIUpstreamTransport = "realtime_websocket"
 )
 
 // OpenAIWSProtocolDecision 表示协议决策结果。

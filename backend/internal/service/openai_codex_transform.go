@@ -127,6 +127,9 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		}
 		result.NormalizedModel = normalizedModel
 	}
+	if normalizeGPT6AstraResponsesRequest(reqBody, normalizedModel) {
+		result.Modified = true
+	}
 
 	if opts.IsCompact {
 		if _, ok := reqBody["store"]; ok {
@@ -586,6 +589,63 @@ func isCodexDateSuffix(suffix string) bool {
 
 func isCodexSparkModel(model string) bool {
 	return normalizeCodexModel(model) == "gpt-5.3-codex-spark"
+}
+
+func isGPT6AstraModel(model string) bool {
+	return strings.EqualFold(strings.TrimSpace(lastOpenAIModelSegment(model)), "gpt-6-astra")
+}
+
+func normalizeGPT6AstraReasoningEffort(model string, effort string) (string, bool) {
+	if !isGPT6AstraModel(model) {
+		return effort, false
+	}
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "none", "minimal":
+		return "low", true
+	default:
+		return effort, false
+	}
+}
+
+func normalizeGPT6AstraResponsesRequest(reqBody map[string]any, model string) bool {
+	if reqBody == nil || !isGPT6AstraModel(model) {
+		return false
+	}
+
+	modified := false
+	for _, field := range []string{"temperature", "top_p", "top_logprobs"} {
+		if _, ok := reqBody[field]; ok {
+			delete(reqBody, field)
+			modified = true
+		}
+	}
+
+	if reasoning, ok := reqBody["reasoning"].(map[string]any); ok {
+		if effort, ok := reasoning["effort"].(string); ok {
+			if normalized, changed := normalizeGPT6AstraReasoningEffort(model, effort); changed {
+				reasoning["effort"] = normalized
+				modified = true
+			}
+		}
+	}
+
+	if include, ok := reqBody["include"].([]any); ok {
+		filtered := include[:0]
+		includeModified := false
+		for _, item := range include {
+			if value, ok := item.(string); ok && value == "message.output_text.logprobs" {
+				modified = true
+				includeModified = true
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		if includeModified {
+			reqBody["include"] = filtered
+		}
+	}
+
+	return modified
 }
 
 func hasOpenAIImageGenerationTool(reqBody map[string]any) bool {

@@ -1048,8 +1048,7 @@
             :class="[
               'flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors',
               'border-b border-gray-100 last:border-0 dark:border-dark-700',
-              selectedKeyForGroup?.group_id === option.value ||
-              (!selectedKeyForGroup?.group_id && option.value === null)
+              selectedKeyForGroup && isKeyGroupSelected(selectedKeyForGroup, option.value)
                 ? 'bg-primary-50 dark:bg-primary-900/20'
                 : 'hover:bg-gray-100 dark:hover:bg-dark-700'
             ]"
@@ -1062,10 +1061,7 @@
               :rate-multiplier="option.rate"
               :user-rate-multiplier="option.userRate"
               :description="option.description"
-              :selected="
-                selectedKeyForGroup?.group_id === option.value ||
-                (!selectedKeyForGroup?.group_id && option.value === null)
-              "
+              :selected="selectedKeyForGroup ? isKeyGroupSelected(selectedKeyForGroup, option.value) : false"
             />
           </button>
           <!-- Empty state when search has no results -->
@@ -1568,13 +1564,40 @@ const openGroupSelector = (key: ApiKey) => {
   }
 }
 
+const getApiKeyGroupIds = (key: ApiKey) => {
+  if (key.group_ids?.length) return [...key.group_ids]
+  return key.group_id !== null ? [key.group_id] : []
+}
+
+const isKeyGroupSelected = (key: ApiKey, groupId: number) => {
+  return getApiKeyGroupIds(key).includes(groupId)
+}
+
 const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
+  if (newGroupId === null) return
+
+  const currentGroupIds = getApiKeyGroupIds(key)
+  const isSelected = currentGroupIds.includes(newGroupId)
+  if (isSelected && currentGroupIds.length === 1) {
+    appStore.showError(t('keys.groupRequired'))
+    return
+  }
+
+  const nextGroupIds = isSelected
+    ? currentGroupIds.filter((groupId) => groupId !== newGroupId)
+    : [...currentGroupIds, newGroupId]
+  const primaryGroupId = key.group_id !== null && nextGroupIds.includes(key.group_id)
+    ? key.group_id
+    : nextGroupIds[0]
+
   groupSelectorKeyId.value = null
   dropdownPosition.value = null
-  if (key.group_id === newGroupId) return
 
   try {
-    await keysAPI.update(key.id, { group_id: newGroupId })
+    await keysAPI.update(key.id, {
+      group_id: primaryGroupId,
+      group_ids: nextGroupIds
+    })
     appStore.showSuccess(t('keys.groupChangedSuccess'))
     loadApiKeys()
   } catch (error) {

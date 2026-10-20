@@ -64,6 +64,21 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 		})
 		return nil, fmt.Errorf("convert responses to chat completions: %w", err)
 	}
+	if len(responsesReq.Tools) > 0 || len(responsesReq.ToolChoice) > 0 {
+		inboundTypes, inboundNames := summarizeResponsesFallbackTools(responsesReq.Tools)
+		convertedNames := summarizeChatFallbackTools(chatReq.Tools)
+		choiceType, choiceName := summarizeResponsesFallbackToolChoice(responsesReq.ToolChoice)
+		logger.FromContext(ctx).Info("openai responses: chat fallback tool summary",
+			zap.Int64("account_id", account.ID),
+			zap.Int("inbound_tool_count", len(responsesReq.Tools)),
+			zap.Strings("inbound_tool_types", inboundTypes),
+			zap.Strings("inbound_tool_names", inboundNames),
+			zap.Int("converted_tool_count", len(chatReq.Tools)),
+			zap.Strings("converted_tool_names", convertedNames),
+			zap.String("tool_choice_type", choiceType),
+			zap.String("tool_choice_name", choiceName),
+		)
+	}
 
 	billingModel := resolveOpenAIForwardModel(account, originalModel, "")
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
@@ -188,9 +203,81 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	}
 
 	if clientStream {
-		return s.streamChatCompletionsAsResponses(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, responsesReq.Tools, startTime)
+		return s.streamChatCompletionsAsResponses(ctx, c, account, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, responsesReq.Tools, startTime)
 	}
 	return s.bufferChatCompletionsAsResponses(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, responsesReq.Tools, startTime)
+}
+
+const maxResponsesFallbackToolSummaryItems = 32
+
+func summarizeResponsesFallbackTools(tools []apicompat.ResponsesTool) ([]string, []string) {
+	limit := min(len(tools), maxResponsesFallbackToolSummaryItems)
+	types := make([]string, 0, limit)
+	names := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		types = append(types, sanitizeResponsesFallbackToolLabel(tools[i].Type))
+		names = append(names, sanitizeResponsesFallbackToolLabel(tools[i].Name))
+	}
+	return types, names
+}
+
+func summarizeChatFallbackTools(tools []apicompat.ChatTool) []string {
+	limit := min(len(tools), maxResponsesFallbackToolSummaryItems)
+	names := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		name := ""
+		if tools[i].Function != nil {
+			name = tools[i].Function.Name
+		}
+		names = append(names, sanitizeResponsesFallbackToolLabel(name))
+	}
+	return names
+}
+
+func summarizeResponsesFallbackToolChoice(raw json.RawMessage) (string, string) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return "", ""
+	}
+	var choice string
+	if err := json.Unmarshal(trimmed, &choice); err == nil {
+		return sanitizeResponsesFallbackToolLabel(choice), ""
+	}
+	var object struct {
+		Type     string `json:"type"`
+		Name     string `json:"name"`
+		Function struct {
+			Name string `json:"name"`
+		} `json:"function"`
+	}
+	if err := json.Unmarshal(trimmed, &object); err != nil {
+		return "invalid", ""
+	}
+	if object.Name == "" {
+		object.Name = object.Function.Name
+	}
+	return sanitizeResponsesFallbackToolLabel(object.Type), sanitizeResponsesFallbackToolLabel(object.Name)
+}
+
+func sanitizeResponsesFallbackToolLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 64 {
+		value = value[:64]
+	}
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		case r == '_', r == '-', r == '.', r == ':':
+			return r
+		default:
+			return '?'
+		}
+	}, value)
 }
 
 func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
@@ -254,7 +341,9 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 }
 
 func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
+	ctx context.Context,
 	c *gin.Context,
+	account *Account,
 	resp *http.Response,
 	originalModel string,
 	billingModel string,
@@ -286,6 +375,13 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawDone := false
+	markClientDisconnected := func(stage string, err error) {
+		if clientDisconnected {
+			return
+		}
+		clientDisconnected = true
+		markOpenAIDownstreamClientDisconnected(ctx, c, account, requestID, stage, err)
+	}
 
 	writeEvents := func(events []apicompat.ResponsesStreamEvent) {
 		if clientDisconnected || len(events) == 0 {
@@ -302,11 +398,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 				continue
 			}
 			if _, err := fmt.Fprint(c.Writer, sse); err != nil {
-				clientDisconnected = true
-				logger.L().Debug("openai responses chat fallback: client disconnected, continuing to drain upstream for billing",
-					zap.Error(err),
-					zap.String("request_id", requestID),
-				)
+				markClientDisconnected("responses_chat_fallback_event_write", err)
 				return
 			}
 		}
@@ -362,16 +454,17 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			)
 		}
 		return &OpenAIForwardResult{
-			RequestID:       requestID,
-			Usage:           usage,
-			Model:           originalModel,
-			BillingModel:    billingModel,
-			UpstreamModel:   upstreamModel,
-			ReasoningEffort: reasoningEffort,
-			ServiceTier:     serviceTier,
-			Stream:          true,
-			Duration:        time.Since(startTime),
-			FirstTokenMs:    firstTokenMs,
+			RequestID:        requestID,
+			Usage:            usage,
+			Model:            originalModel,
+			BillingModel:     billingModel,
+			UpstreamModel:    upstreamModel,
+			ReasoningEffort:  reasoningEffort,
+			ServiceTier:      serviceTier,
+			Stream:           true,
+			Duration:         time.Since(startTime),
+			FirstTokenMs:     firstTokenMs,
+			ClientDisconnect: clientDisconnected,
 		}, fmt.Errorf("stream usage incomplete: %w", err)
 	}
 
@@ -379,7 +472,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	if !clientDisconnected {
 		writeStreamHeaders()
 		if _, err := fmt.Fprint(c.Writer, "data: [DONE]\n\n"); err != nil {
-			clientDisconnected = true
+			markClientDisconnected("responses_chat_fallback_done_write", err)
 		}
 		if !clientDisconnected {
 			c.Writer.Flush()
@@ -392,16 +485,17 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	}
 
 	return &OpenAIForwardResult{
-		RequestID:       requestID,
-		Usage:           usage,
-		Model:           originalModel,
-		BillingModel:    billingModel,
-		UpstreamModel:   upstreamModel,
-		ReasoningEffort: reasoningEffort,
-		ServiceTier:     serviceTier,
-		Stream:          true,
-		Duration:        time.Since(startTime),
-		FirstTokenMs:    firstTokenMs,
+		RequestID:        requestID,
+		Usage:            usage,
+		Model:            originalModel,
+		BillingModel:     billingModel,
+		UpstreamModel:    upstreamModel,
+		ReasoningEffort:  reasoningEffort,
+		ServiceTier:      serviceTier,
+		Stream:           true,
+		Duration:         time.Since(startTime),
+		FirstTokenMs:     firstTokenMs,
+		ClientDisconnect: clientDisconnected,
 	}, nil
 }
 

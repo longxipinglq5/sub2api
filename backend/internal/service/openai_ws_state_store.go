@@ -110,7 +110,10 @@ func (s *defaultOpenAIWSStateStore) BindResponseAccount(ctx context.Context, gro
 		return nil
 	}
 	cacheKey := openAIWSResponseAccountCacheKey(id)
-	cacheCtx, cancel := withOpenAIWSStateStoreRedisTimeout(ctx)
+	// Response/account binding is persisted after the upstream stream completes.
+	// At that point the request context may already be canceled, but the shared
+	// Redis binding is still required for a follow-up request on another node.
+	cacheCtx, cancel := withOpenAIWSStateStoreDetachedRedisTimeout(ctx)
 	defer cancel()
 	return s.cache.SetSessionAccountID(cacheCtx, groupID, cacheKey, accountID, ttl)
 }
@@ -444,4 +447,12 @@ func withOpenAIWSStateStoreRedisTimeout(ctx context.Context) (context.Context, c
 		ctx = context.Background()
 	}
 	return context.WithTimeout(ctx, openAIWSStateStoreRedisTimeout)
+}
+
+func withOpenAIWSStateStoreDetachedRedisTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	base := context.Background()
+	if ctx != nil {
+		base = context.WithoutCancel(ctx)
+	}
+	return context.WithTimeout(base, openAIWSStateStoreRedisTimeout)
 }

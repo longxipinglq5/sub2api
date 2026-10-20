@@ -48,6 +48,7 @@ func TestRunClientToUpstream_ErrorPaths(t *testing.T) {
 			nil,
 			func(_ coderws.MessageType, _ []byte) error { return nil },
 			func() {},
+			"",
 			nil,
 			nil,
 			exitCh,
@@ -69,6 +70,7 @@ func TestRunClientToUpstream_ErrorPaths(t *testing.T) {
 			nil,
 			func(_ coderws.MessageType, _ []byte) error { return errors.New("boom") },
 			func() {},
+			"",
 			nil,
 			nil,
 			exitCh,
@@ -92,6 +94,7 @@ func TestRunClientToUpstream_ErrorPaths(t *testing.T) {
 			nil,
 			func(_ coderws.MessageType, _ []byte) error { return nil },
 			func() {},
+			"",
 			forwarded,
 			func(event RelayTraceEvent) {
 				traces = append(traces, event)
@@ -102,6 +105,32 @@ func TestRunClientToUpstream_ErrorPaths(t *testing.T) {
 		require.Equal(t, "read_client", sig.stage)
 		require.Equal(t, int64(1), forwarded.Load())
 		require.NotEmpty(t, traces)
+	})
+
+	t.Run("sanitize astra response create using session model", func(t *testing.T) {
+		t.Parallel()
+
+		exitCh := make(chan relayExitSignal, 1)
+		var forwarded []byte
+		runClientToUpstream(
+			context.Background(),
+			newPassthroughTestFrameConn([]passthroughTestFrame{
+				{msgType: coderws.MessageText, payload: []byte(`{"type":"response.create","temperature":0.7,"top_p":0.8,"top_logprobs":2,"reasoning":{"effort":"minimal"},"include":["reasoning.encrypted_content","message.output_text.logprobs"]}`)},
+			}, true),
+			nil,
+			func(_ coderws.MessageType, payload []byte) error {
+				forwarded = append([]byte(nil), payload...)
+				return nil
+			},
+			func() {},
+			"gpt-6-astra",
+			nil,
+			nil,
+			exitCh,
+		)
+		sig := <-exitCh
+		require.Equal(t, "read_client", sig.stage)
+		require.JSONEq(t, `{"type":"response.create","reasoning":{"effort":"low"},"include":["reasoning.encrypted_content"]}`, string(forwarded))
 	})
 }
 
@@ -333,6 +362,89 @@ func TestParseUsageAndAccumulateAcceptsChatUsageAliases(t *testing.T) {
 	require.Equal(t, 4, got.CacheReadInputTokens)
 	require.Equal(t, 2, got.ImageOutputTokens)
 	require.Equal(t, got, state.usage)
+}
+
+func TestParseUsageAndAccumulateCacheWriteProvenance(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		usage            string
+		wantCacheWrite   int
+		wantIncludedFlag bool
+	}{
+		{
+			name:             "nested input details wins over legacy top level",
+			usage:            `{"input_tokens":20,"output_tokens":2,"input_tokens_details":{"cached_tokens":3,"cache_write_tokens":5},"cache_creation_input_tokens":99}`,
+			wantCacheWrite:   5,
+			wantIncludedFlag: true,
+		},
+		{
+			name:             "present zero nested input details still wins",
+			usage:            `{"input_tokens":20,"output_tokens":2,"input_tokens_details":{"cache_write_tokens":0},"prompt_tokens_details":{"cache_write_tokens":7},"cache_creation_input_tokens":99}`,
+			wantCacheWrite:   0,
+			wantIncludedFlag: true,
+		},
+		{
+			name:             "prompt details alias",
+			usage:            `{"prompt_tokens":20,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":3,"cache_write_tokens":6},"cache_creation_input_tokens":99}`,
+			wantCacheWrite:   6,
+			wantIncludedFlag: true,
+		},
+		{
+			name:             "legacy top level fallback is not included in input",
+			usage:            `{"input_tokens":20,"output_tokens":2,"input_tokens_details":{"cached_tokens":3},"cache_creation_input_tokens":8}`,
+			wantCacheWrite:   8,
+			wantIncludedFlag: false,
+		},
+		{
+			name:             "top level cache write fallback is not included in input",
+			usage:            `{"input_tokens":20,"output_tokens":2,"input_tokens_details":{"cached_tokens":3},"cache_write_tokens":9}`,
+			wantCacheWrite:   9,
+			wantIncludedFlag: false,
+		},
+		{
+			name:             "present zero legacy cache creation wins over cache write fallback",
+			usage:            `{"input_tokens":20,"output_tokens":2,"cache_creation_input_tokens":0,"cache_write_tokens":9}`,
+			wantCacheWrite:   0,
+			wantIncludedFlag: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			state := &relayState{}
+			got := parseUsageAndAccumulate(
+				state,
+				[]byte(`{"type":"response.completed","response":{"usage":`+tt.usage+`}}`),
+				"response.completed",
+				nil,
+			)
+			require.Equal(t, tt.wantCacheWrite, got.CacheCreationInputTokens)
+			require.Equal(t, tt.wantIncludedFlag, got.CacheCreationInputTokensIncludedInInput)
+			require.Equal(t, got, state.usage)
+		})
+	}
+}
+
+func TestSanitizeResponseCreateGPT6Astra(t *testing.T) {
+	t.Parallel()
+
+	original := []byte(`{"type":"response.create","model":"astra-alias","temperature":0.7,"top_p":0.8,"top_logprobs":2,"reasoning":{"effort":"none"},"include":["message.output_text.logprobs","reasoning.encrypted_content","message.output_text.logprobs"],"input":"hi"}`)
+	got, err := SanitizeResponseCreate(original, "openai/gpt-6-astra")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"type":"response.create","model":"astra-alias","reasoning":{"effort":"low"},"include":["reasoning.encrypted_content"],"input":"hi"}`, string(got))
+
+	nonAstra := []byte(`{"type":"response.create","model":"gpt-5.5","temperature":0.7,"reasoning":{"effort":"minimal"},"include":["message.output_text.logprobs"]}`)
+	got, err = SanitizeResponseCreate(nonAstra, "gpt-5.5")
+	require.NoError(t, err)
+	require.Equal(t, nonAstra, got)
+
+	nonCreate := []byte(`{"type":"session.update","session":{"model":"gpt-6-astra"},"temperature":0.7}`)
+	got, err = SanitizeResponseCreate(nonCreate, "gpt-6-astra")
+	require.NoError(t, err)
+	require.Equal(t, nonCreate, got)
 }
 
 func TestEmitTurnCompleteCoverage(t *testing.T) {

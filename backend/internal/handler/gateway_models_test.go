@@ -392,6 +392,183 @@ func TestGatewayModels_OpenAICustomModelsListKeepsOpenAIResponseShapeForDefaultF
 	require.Empty(t, got.Data[0].CreatedAt)
 }
 
+func TestGatewayModels_MultiGroupKeyCombinesClaudeAndOpenAIModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	claudeGroupID := int64(30)
+	openAIGroupID := int64(31)
+	h := newGatewayModelsHandlerForTest(
+		&gatewayModelsAccountRepoStub{
+			byGroup: map[int64][]service.Account{
+				claudeGroupID: {
+					{
+						ID:       1,
+						Platform: service.PlatformAnthropic,
+						Credentials: map[string]any{
+							"model_mapping": map[string]any{
+								"claude-sonnet-4-6": "claude-sonnet-4-6",
+							},
+						},
+					},
+				},
+				openAIGroupID: {
+					{
+						ID:       2,
+						Platform: service.PlatformOpenAI,
+						Credentials: map[string]any{
+							"model_mapping": map[string]any{
+								"gpt-5.5": "gpt-5.5",
+							},
+						},
+					},
+				},
+			},
+		},
+	)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		GroupID:  &claudeGroupID,
+		GroupIDs: []int64{claudeGroupID, openAIGroupID},
+		Group:    &service.Group{ID: claudeGroupID, Platform: service.PlatformAnthropic},
+		Groups: []service.Group{
+			{ID: claudeGroupID, Platform: service.PlatformAnthropic},
+			{ID: openAIGroupID, Platform: service.PlatformOpenAI},
+		},
+	})
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, []string{"claude-sonnet-4-6", "gpt-5.5"}, modelIDsForTest(got.Data))
+}
+
+func TestGatewayModels_MultiGroupKeyFallsBackPerGroupPlatform(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	claudeGroupID := int64(32)
+	openAIGroupID := int64(33)
+	h := newGatewayModelsHandlerForTest(
+		&gatewayModelsAccountRepoStub{
+			byGroup: map[int64][]service.Account{
+				claudeGroupID: {
+					{
+						ID:       1,
+						Platform: service.PlatformAnthropic,
+						Credentials: map[string]any{
+							"model_mapping": map[string]any{
+								"claude-sonnet-4-6": "claude-sonnet-4-6",
+							},
+						},
+					},
+				},
+				openAIGroupID: {
+					{ID: 2, Platform: service.PlatformOpenAI},
+				},
+			},
+		},
+	)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		GroupID:  &claudeGroupID,
+		GroupIDs: []int64{claudeGroupID, openAIGroupID},
+		Group:    &service.Group{ID: claudeGroupID, Platform: service.PlatformAnthropic},
+		Groups: []service.Group{
+			{ID: claudeGroupID, Platform: service.PlatformAnthropic},
+			{ID: openAIGroupID, Platform: service.PlatformOpenAI},
+		},
+	})
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	ids := modelIDsForTest(got.Data)
+	require.Contains(t, ids, "claude-sonnet-4-6")
+	require.Contains(t, ids, "gpt-5.5")
+}
+
+func TestGatewayModels_MultiGroupKeyAppliesEachGroupCustomList(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	claudeGroupID := int64(34)
+	openAIGroupID := int64(35)
+	claudeGroup := service.Group{
+		ID:       claudeGroupID,
+		Platform: service.PlatformAnthropic,
+		ModelsListConfig: service.GroupModelsListConfig{
+			Enabled: true,
+			Models:  []string{"claude-sonnet-4-6"},
+		},
+	}
+	openAIGroup := service.Group{
+		ID:       openAIGroupID,
+		Platform: service.PlatformOpenAI,
+		ModelsListConfig: service.GroupModelsListConfig{
+			Enabled: true,
+			Models:  []string{"gpt-5.4"},
+		},
+	}
+	h := newGatewayModelsHandlerForTest(
+		&gatewayModelsAccountRepoStub{
+			byGroup: map[int64][]service.Account{
+				claudeGroupID: {
+					{
+						ID:       1,
+						Platform: service.PlatformAnthropic,
+						Credentials: map[string]any{
+							"model_mapping": map[string]any{
+								"claude-opus-4-6":   "claude-opus-4-6",
+								"claude-sonnet-4-6": "claude-sonnet-4-6",
+							},
+						},
+					},
+				},
+				openAIGroupID: {
+					{
+						ID:       2,
+						Platform: service.PlatformOpenAI,
+						Credentials: map[string]any{
+							"model_mapping": map[string]any{
+								"gpt-5.4": "gpt-5.4",
+								"gpt-5.5": "gpt-5.5",
+							},
+						},
+					},
+				},
+			},
+		},
+	)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		GroupID:  &claudeGroupID,
+		GroupIDs: []int64{claudeGroupID, openAIGroupID},
+		Group:    &claudeGroup,
+		Groups:   []service.Group{claudeGroup, openAIGroup},
+	})
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, []string{"claude-sonnet-4-6", "gpt-5.4"}, modelIDsForTest(got.Data))
+}
+
 func modelIDsForTest(models []gatewayModelItemForTest) []string {
 	ids := make([]string, 0, len(models))
 	for _, model := range models {

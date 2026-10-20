@@ -7,6 +7,7 @@ import KeysView from '../KeysView.vue'
 
 const {
   listKeys,
+  updateKey,
   getPublicSettings,
   getDashboardApiKeysUsage,
   getAvailableGroups,
@@ -18,6 +19,7 @@ const {
   nextStep,
 } = vi.hoisted(() => ({
   listKeys: vi.fn(),
+  updateKey: vi.fn(),
   getPublicSettings: vi.fn(),
   getDashboardApiKeysUsage: vi.fn(),
   getAvailableGroups: vi.fn(),
@@ -42,9 +44,12 @@ const messages: Record<string, string> = {
   'keys.created': 'Created',
   'keys.expiresAt': 'Expires',
   'keys.group': 'Group',
+  'keys.clickToChangeGroup': 'Change groups',
+  'keys.groupChangedSuccess': 'Groups updated',
   'keys.lastUsedAt': 'Last Used',
   'keys.rateLimitColumn': 'Rate Limit',
   'keys.searchPlaceholder': 'Search name or key...',
+  'keys.selectGroup': 'Select groups',
   'keys.status.active': 'Active',
   'keys.status.expired': 'Expired',
   'keys.status.inactive': 'Inactive',
@@ -56,7 +61,7 @@ vi.mock('@/api', () => ({
   keysAPI: {
     list: listKeys,
     create: vi.fn(),
-    update: vi.fn(),
+    update: updateKey,
     delete: vi.fn(),
     toggleStatus: vi.fn(),
   },
@@ -131,6 +136,31 @@ const createApiKey = (): ApiKey => ({
   reset_7d_at: null,
 })
 
+const groups = [
+  {
+    id: 1,
+    name: 'openai-default',
+    description: 'OpenAI group',
+    platform: 'openai' as const,
+    subscription_type: 'standard' as const,
+    rate_multiplier: 1,
+    status: 'active' as const,
+    is_exclusive: false,
+    sort_order: 0,
+  },
+  {
+    id: 2,
+    name: 'Claude Kiro',
+    description: 'Claude group',
+    platform: 'anthropic' as const,
+    subscription_type: 'standard' as const,
+    rate_multiplier: 1,
+    status: 'active' as const,
+    is_exclusive: false,
+    sort_order: 1,
+  },
+]
+
 const AppLayoutStub = {
   template: '<div><slot /></div>',
 }
@@ -154,6 +184,7 @@ const DataTableStub = {
       <div data-test="columns">{{ columns.map((col) => col.key).join(',') }}</div>
       <div v-for="row in data" :key="row.id">
         <slot name="cell-name" :value="row.name" :row="row" />
+        <slot name="cell-group" :value="row.group" :row="row" />
       </div>
       <slot name="empty" />
     </div>
@@ -194,7 +225,10 @@ const mountView = async () => {
         UseKeyModal: true,
         EndpointPopover: true,
         GroupBadge: true,
-        GroupOptionItem: true,
+        GroupOptionItem: {
+          props: ['name', 'selected'],
+          template: '<span data-test="group-option" :data-selected="String(selected)">{{ name }}</span>',
+        },
         Teleport: true,
       },
     },
@@ -220,6 +254,7 @@ describe('user KeysView column settings', () => {
     localStorage.clear()
 
     listKeys.mockReset()
+    updateKey.mockReset()
     getPublicSettings.mockReset()
     getDashboardApiKeysUsage.mockReset()
     getAvailableGroups.mockReset()
@@ -302,5 +337,77 @@ describe('user KeysView column settings', () => {
     expect(columnMenuText).toContain('Rate Limit')
     expect(columnMenuText).not.toContain('Name')
     expect(columnMenuText).not.toContain('Actions')
+  })
+})
+
+describe('user KeysView multi-group selector', () => {
+  beforeEach(() => {
+    localStorage.clear()
+
+    listKeys.mockReset()
+    updateKey.mockReset()
+    getPublicSettings.mockReset()
+    getDashboardApiKeysUsage.mockReset()
+    getAvailableGroups.mockReset()
+    getUserGroupRates.mockReset()
+    showError.mockReset()
+    showSuccess.mockReset()
+    copyToClipboard.mockReset()
+    isCurrentStep.mockReset()
+    nextStep.mockReset()
+
+    const key = {
+      ...createApiKey(),
+      group_id: 2,
+      group_ids: [2, 1],
+      group: groups[1],
+      groups,
+    }
+    listKeys.mockResolvedValue({
+      items: [key],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    updateKey.mockResolvedValue({
+      ...key,
+      group_ids: [2],
+      groups: [groups[1]],
+    })
+    getPublicSettings.mockResolvedValue({})
+    getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
+    getAvailableGroups.mockResolvedValue(groups)
+    getUserGroupRates.mockResolvedValue({})
+    isCurrentStep.mockReturnValue(false)
+  })
+
+  it('marks every associated group as selected', async () => {
+    const wrapper = await mountView()
+
+    const selectorButton = wrapper.get('button[title="Change groups"]')
+    expect(selectorButton.text()).toContain('+1')
+
+    await selectorButton.trigger('click')
+    await nextTick()
+
+    const options = wrapper.findAll('[data-test="group-option"]')
+    expect(options.map((option) => [option.text(), option.attributes('data-selected')])).toEqual([
+      ['openai-default', 'true'],
+      ['Claude Kiro', 'true'],
+    ])
+  })
+
+  it('removes one group without overwriting the remaining associations', async () => {
+    const wrapper = await mountView()
+
+    await wrapper.get('button[title="Change groups"]').trigger('click')
+    await nextTick()
+    await getButtonByText(wrapper, 'openai-default').trigger('click')
+
+    expect(updateKey).toHaveBeenCalledWith(1, {
+      group_id: 2,
+      group_ids: [2],
+    })
   })
 })

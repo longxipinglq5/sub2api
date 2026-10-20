@@ -56,9 +56,20 @@ func Logger() gin.HandlerFunc {
 		if model != "" {
 			fields = append(fields, zap.String("model", model))
 		}
+		clientDisconnected, _ := c.Request.Context().Value(ctxkey.DownstreamClientDisconnected).(bool)
+		if clientDisconnected {
+			fields = append(fields,
+				zap.Bool("client_disconnected", true),
+				zap.String("request_outcome", "client_disconnected"),
+			)
+		}
 
 		l := logger.FromContext(c.Request.Context()).With(fields...)
-		l.Info("http request completed", zap.Time("completed_at", endTime))
+		if clientDisconnected {
+			l.Warn("http request completed", zap.Time("completed_at", endTime))
+		} else {
+			l.Info("http request completed", zap.Time("completed_at", endTime))
+		}
 
 		if len(c.Errors) > 0 {
 			l.Warn("http request contains gin errors", zap.String("errors", c.Errors.String()))

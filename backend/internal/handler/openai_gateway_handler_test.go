@@ -1714,3 +1714,49 @@ data: {"type":"response.failed","error":{"message":"This content was flagged"}}
 		require.False(t, openAIForwardErrorAlreadyCommunicated(c, c.Writer.Size(), errors.New("openai cyber_policy: blocked")))
 	})
 }
+
+func TestOpenAIFailoverOutputCommitted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name                    string
+		writeAfterSnapshot      bool
+		retryableAfterKeepalive bool
+		wantCommitted           bool
+	}{
+		{
+			name:                    "keepalive-only output permits failover",
+			writeAfterSnapshot:      true,
+			retryableAfterKeepalive: true,
+			wantCommitted:           false,
+		},
+		{
+			name:                    "semantic output prevents failover",
+			writeAfterSnapshot:      true,
+			retryableAfterKeepalive: false,
+			wantCommitted:           true,
+		},
+		{
+			name:                    "no output permits failover",
+			writeAfterSnapshot:      false,
+			retryableAfterKeepalive: false,
+			wantCommitted:           false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			before := c.Writer.Size()
+			if tt.writeAfterSnapshot {
+				_, _ = c.Writer.WriteString(":\n\n")
+			}
+
+			failoverErr := &service.UpstreamFailoverError{
+				RetryableAfterKeepalive: tt.retryableAfterKeepalive,
+			}
+			require.Equal(t, tt.wantCommitted, openAIFailoverOutputCommitted(c, before, failoverErr))
+		})
+	}
+}

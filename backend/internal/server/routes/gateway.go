@@ -170,6 +170,9 @@ func RegisterGatewayRoutes(
 			}
 			h.OpenAIGateway.ResponsesWebSocket(c)
 		})
+		gateway.GET("/realtime", func(c *gin.Context) {
+			h.OpenAIGateway.RealtimeWebSocket(c)
+		})
 		// OpenAI Chat Completions API: auto-route based on group platform
 		gateway.POST("/chat/completions", func(c *gin.Context) {
 			if getGroupPlatform(c) == service.PlatformGrok {
@@ -231,6 +234,9 @@ func RegisterGatewayRoutes(
 			return
 		}
 		h.OpenAIGateway.ResponsesWebSocket(c)
+	})
+	r.GET("/realtime", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, func(c *gin.Context) {
+		h.OpenAIGateway.RealtimeWebSocket(c)
 	})
 	codexDirect := r.Group("/backend-api/codex")
 	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic)

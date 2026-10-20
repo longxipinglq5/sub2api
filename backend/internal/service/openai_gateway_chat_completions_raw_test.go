@@ -79,6 +79,115 @@ func TestBuildOpenAIResponsesURL_ProbeURL(t *testing.T) {
 	}
 }
 
+func TestEnsureGPT56ChatCompletionsToolReasoningNone(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		model        string
+		body         string
+		wantInjected bool
+		wantEffort   string
+	}{
+		{
+			name:         "injects for sol function tools",
+			model:        "gpt-5.6-sol",
+			body:         `{"model":"gpt-5.6-sol","tools":[{"type":"function","function":{"name":"exec"}}]}`,
+			wantInjected: true,
+			wantEffort:   "none",
+		},
+		{
+			name:         "injects for family alias",
+			model:        "gpt-5.6",
+			body:         `{"model":"gpt-5.6","tools":[{"type":"function","function":{"name":"exec"}}]}`,
+			wantInjected: true,
+			wantEffort:   "none",
+		},
+		{
+			name:         "preserves explicit flat effort",
+			model:        "gpt-5.6-sol",
+			body:         `{"model":"gpt-5.6-sol","reasoning_effort":"low","tools":[{"type":"function","function":{"name":"exec"}}]}`,
+			wantInjected: false,
+			wantEffort:   "low",
+		},
+		{
+			name:         "preserves explicit nested effort",
+			model:        "gpt-5.6-sol",
+			body:         `{"model":"gpt-5.6-sol","reasoning":{"effort":"high"},"tools":[{"type":"function","function":{"name":"exec"}}]}`,
+			wantInjected: false,
+		},
+		{
+			name:         "does not inject without tools",
+			model:        "gpt-5.6-sol",
+			body:         `{"model":"gpt-5.6-sol","messages":[]}`,
+			wantInjected: false,
+		},
+		{
+			name:         "does not inject for non-function tools",
+			model:        "gpt-5.6-sol",
+			body:         `{"model":"gpt-5.6-sol","tools":[{"type":"web_search"}]}`,
+			wantInjected: false,
+		},
+		{
+			name:         "does not inject for older model",
+			model:        "gpt-5.5",
+			body:         `{"model":"gpt-5.5","tools":[{"type":"function","function":{"name":"exec"}}]}`,
+			wantInjected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, injected := ensureGPT56ChatCompletionsToolReasoningNone([]byte(tt.body), tt.model)
+			require.Equal(t, tt.wantInjected, injected)
+			if !tt.wantInjected {
+				require.Equal(t, tt.body, string(got))
+			}
+			if tt.wantEffort != "" {
+				require.Equal(t, tt.wantEffort, gjson.GetBytes(got, "reasoning_effort").String())
+			}
+		})
+	}
+}
+
+func TestForwardAsRawChatCompletions_InjectsGPT56ToolReasoningNone(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"exec","parameters":{"type":"object"}}}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"id":"chatcmpl_gpt56","object":"chat.completion.chunk","model":"gpt-5.6-sol","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}`,
+			"",
+			`data: {"id":"chatcmpl_gpt56","object":"chat.completion.chunk","model":"gpt-5.6-sol","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+			"",
+			"data: [DONE]",
+			"",
+		}, "\n"))),
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "none", gjson.GetBytes(upstream.lastBody, "reasoning_effort").String())
+	require.True(t, gjson.GetBytes(upstream.lastBody, "stream_options.include_usage").Bool())
+	require.NotNil(t, result.ReasoningEffort)
+	require.Equal(t, "none", *result.ReasoningEffort)
+	require.Contains(t, rec.Body.String(), `"content":"ok"`)
+}
+
 func TestForwardAsRawChatCompletions_ForcesStreamUsageUpstreamAndPassesUsageDownstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

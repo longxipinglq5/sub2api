@@ -98,6 +98,10 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	// derive a stable seed from the final upstream model family.
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	if normalized, changed := normalizeGPT6AstraReasoningEffort(upstreamModel, chatReq.ReasoningEffort); changed {
+		chatReq.ReasoningEffort = normalized
+	}
+	defaultGPT56ToolReasoningNone := shouldDefaultGPT56FunctionToolReasoningNone(body, upstreamModel)
 
 	promptCacheKey = strings.TrimSpace(promptCacheKey)
 	compatPromptCacheInjected := false
@@ -130,6 +134,17 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		if err != nil {
 			return nil, fmt.Errorf("rewrite model in responses-shape body: %w", err)
 		}
+		if normalizedBody, normalized, normalizeErr := normalizeGPT6AstraPassthroughBody(responsesBody); normalizeErr != nil {
+			return nil, fmt.Errorf("normalize gpt-6-astra responses-shape body: %w", normalizeErr)
+		} else if normalized {
+			responsesBody = normalizedBody
+		}
+		if defaultGPT56ToolReasoningNone {
+			responsesBody, err = sjson.SetBytes(responsesBody, "reasoning.effort", "none")
+			if err != nil {
+				return nil, fmt.Errorf("inject gpt-5.6 tool reasoning effort: %w", err)
+			}
+		}
 		// Strip Responses API parameters that no Codex upstream accepts.
 		// Because this branch forwards the raw body (the normal path rebuilds
 		// it from ChatCompletionsRequest and drops unknown fields naturally),
@@ -156,6 +171,14 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	} else {
 		// Normal path: convert Chat Completions → Responses.
 		// ChatCompletionsToResponses always sets Stream=true (upstream always streams).
+		if isGPT6AstraModel(upstreamModel) {
+			// Sampling compatibility must be decided from the mapped upstream model,
+			// not from a client-facing alias that happens to route to Astra.
+			chatReq.Model = upstreamModel
+		}
+		if defaultGPT56ToolReasoningNone {
+			chatReq.ReasoningEffort = "none"
+		}
 		responsesReq, err = apicompat.ChatCompletionsToResponses(&chatReq)
 		if err != nil {
 			return nil, fmt.Errorf("convert chat completions to responses: %w", err)

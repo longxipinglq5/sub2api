@@ -8,6 +8,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestApplyCodexOAuthTransform_NormalizesGPT6AstraUnsupportedFields(t *testing.T) {
+	reqBody := map[string]any{
+		"model":        "gpt-6-astra",
+		"temperature":  0.7,
+		"top_p":        0.9,
+		"top_logprobs": 3,
+		"reasoning":    map[string]any{"effort": "none"},
+		"include": []any{
+			"reasoning.encrypted_content",
+			"message.output_text.logprobs",
+		},
+	}
+
+	result := applyCodexOAuthTransform(reqBody, false, false)
+
+	require.True(t, result.Modified)
+	require.NotContains(t, reqBody, "temperature")
+	require.NotContains(t, reqBody, "top_p")
+	require.NotContains(t, reqBody, "top_logprobs")
+	require.Equal(t, "low", reqBody["reasoning"].(map[string]any)["effort"])
+	require.Equal(t, []any{"reasoning.encrypted_content"}, reqBody["include"])
+}
+
+func TestNormalizeGPT6AstraReasoningEffortPreservesOtherModels(t *testing.T) {
+	got, changed := normalizeGPT6AstraReasoningEffort("gpt-5.5", "none")
+	require.False(t, changed)
+	require.Equal(t, "none", got)
+
+	got, changed = normalizeGPT6AstraReasoningEffort("gpt-6-astra", "minimal")
+	require.True(t, changed)
+	require.Equal(t, "low", got)
+}
+
 func TestApplyCodexOAuthTransform_ToolContinuationPreservesInput(t *testing.T) {
 	// 续链场景：保留 item_reference 与 id，但不再强制 store=true。
 

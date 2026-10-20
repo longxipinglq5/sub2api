@@ -41,6 +41,11 @@ func TestOpenAIUpstreamEndpoint_ViaGetUpstreamEndpoint(t *testing.T) {
 			path: "/v1/messages",
 			want: EndpointResponses,
 		},
+		{
+			name: "realtime remains realtime upstream endpoint",
+			path: "/v1/realtime",
+			want: EndpointRealtime,
+		},
 	}
 
 	for _, tt := range tests {

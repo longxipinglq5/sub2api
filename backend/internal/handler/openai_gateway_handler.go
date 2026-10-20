@@ -104,6 +104,31 @@ func openAICompatibleRequestPlatform(apiKey *service.APIKey) string {
 	return service.PlatformOpenAI
 }
 
+func apiKeyHasPlatform(apiKey *service.APIKey, platform string) bool {
+	if apiKey == nil || platform == "" {
+		return false
+	}
+	if apiKey.Group != nil && apiKey.Group.Platform == platform {
+		return true
+	}
+	for i := range apiKey.Groups {
+		if apiKey.Groups[i].Platform == platform {
+			return true
+		}
+	}
+	return false
+}
+
+func openAIResponsesTargetPlatform(apiKey *service.APIKey, model string) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "grok-") && apiKeyHasPlatform(apiKey, service.PlatformGrok) {
+		return service.PlatformGrok
+	}
+	if apiKeyHasPlatform(apiKey, service.PlatformOpenAI) {
+		return service.PlatformOpenAI
+	}
+	return openAICompatibleRequestPlatform(apiKey)
+}
+
 // NewOpenAIGatewayHandler creates a new OpenAIGatewayHandler
 func NewOpenAIGatewayHandler(
 	gatewayService *service.OpenAIGatewayService,
@@ -251,7 +276,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
-	if _, err := resolveEffectiveAPIKeyGroupForRequest(c.Request.Context(), h.gatewayService, apiKey, reqModel); err != nil {
+	targetPlatform := openAIResponsesTargetPlatform(apiKey, reqModel)
+	if _, err := resolveEffectiveAPIKeyGroupForPlatform(c.Request.Context(), h.gatewayService, apiKey, reqModel, targetPlatform); err != nil {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", err.Error())
 		return
 	}
@@ -358,7 +384,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "compact_not_supported", "No available OpenAI accounts support /responses/compact", streamStarted)
 					return
 				}
-				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformOpenAI)
+				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, requestPlatform)
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				}
@@ -366,14 +392,14 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				return
 			}
 			if lastFailoverErr != nil {
-				h.handleFailoverExhausted(c, lastFailoverErr, streamStarted)
+				h.handleFailoverExhausted(c, lastFailoverErr, openAIResponseStreamStarted(c, streamStarted))
 			} else {
-				h.handleFailoverExhaustedSimple(c, 502, streamStarted)
+				h.handleFailoverExhaustedSimple(c, 502, openAIResponseStreamStarted(c, streamStarted))
 			}
 			return
 		}
 		if selection == nil || selection.Account == nil {
-			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformOpenAI)
+			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, requestPlatform)
 			if !cls.ModelNotFound {
 				markOpsRoutingCapacityLimited(c)
 			}
@@ -430,7 +456,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			service.SetOpsLatencyMs(c, service.OpsTimeToFirstTokenMsKey, int64(*result.FirstTokenMs))
 		}
 		if err != nil {
-			if result != nil && result.ImageCount > 0 {
+			if result != nil && result.ClientDisconnect {
+				reqLog.Warn("openai.client_disconnected_with_upstream_error",
+					zap.Int64("account_id", account.ID),
+					zap.String("upstream_request_id", result.RequestID),
+					zap.Error(err),
+				)
+			} else if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),
 					zap.Int("image_count", result.ImageCount),
@@ -439,7 +471,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
-					if c.Writer.Size() != writerSizeBeforeForward {
+					if openAIFailoverOutputCommitted(c, writerSizeBeforeForward, failoverErr) {
 						h.gatewayService.RecordOpenAICommittedFailoverError(c.Request.Context(), account, failoverErr)
 						h.handleFailoverExhausted(c, failoverErr, true)
 						return
@@ -469,12 +501,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {
-						h.handleFailoverExhausted(c, failoverErr, streamStarted)
+						h.handleFailoverExhausted(c, failoverErr, openAIResponseStreamStarted(c, streamStarted))
 						return
 					}
 					switchCount++
 					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount) {
-						h.handleFailoverExhausted(c, failoverErr, streamStarted)
+						h.handleFailoverExhausted(c, failoverErr, openAIResponseStreamStarted(c, streamStarted))
 						return
 					}
 					reqLog.Warn("openai.upstream_failover_switching",
@@ -509,7 +541,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			if account.Type == service.AccountTypeOAuth {
 				h.gatewayService.UpdateCodexUsageSnapshotFromHeaders(c.Request.Context(), account.ID, result.ResponseHeaders)
 			}
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, result.FirstTokenMs)
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, err == nil, result.FirstTokenMs)
 		} else {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil)
 		}
@@ -801,9 +833,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				}
 			} else {
 				if lastFailoverErr != nil {
-					h.handleAnthropicFailoverExhausted(c, lastFailoverErr, streamStarted)
+					h.handleAnthropicFailoverExhausted(c, lastFailoverErr, openAIResponseStreamStarted(c, streamStarted))
 				} else {
-					h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
+					h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", openAIResponseStreamStarted(c, streamStarted))
 				}
 				return
 			}
@@ -867,7 +899,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
-					if c.Writer.Size() != writerSizeBeforeForward {
+					if openAIFailoverOutputCommitted(c, writerSizeBeforeForward, failoverErr) {
 						h.gatewayService.RecordOpenAICommittedFailoverError(c.Request.Context(), account, failoverErr)
 						h.handleAnthropicFailoverExhausted(c, failoverErr, true)
 						return
@@ -897,12 +929,12 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {
-						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
+						h.handleAnthropicFailoverExhausted(c, failoverErr, openAIResponseStreamStarted(c, streamStarted))
 						return
 					}
 					switchCount++
 					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount) {
-						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
+						h.handleAnthropicFailoverExhausted(c, failoverErr, openAIResponseStreamStarted(c, streamStarted))
 						return
 					}
 					reqLog.Warn("openai_messages.upstream_failover_switching",
@@ -1283,7 +1315,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 
-	if _, err := resolveEffectiveAPIKeyGroupForRequest(ctx, h.gatewayService, apiKey, reqModel); err != nil {
+	targetPlatform := openAIResponsesTargetPlatform(apiKey, reqModel)
+	if _, err := resolveEffectiveAPIKeyGroupForPlatform(ctx, h.gatewayService, apiKey, reqModel, targetPlatform); err != nil {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, err.Error())
 		return
 	}
@@ -1951,6 +1984,17 @@ func shouldLogOpenAIForwardFailureAsWarn(c *gin.Context, wroteFallback bool) boo
 		return false
 	}
 	return c.Writer.Written()
+}
+
+func openAIFailoverOutputCommitted(c *gin.Context, writerSizeBeforeForward int, failoverErr *service.UpstreamFailoverError) bool {
+	if c == nil || c.Writer == nil || c.Writer.Size() == writerSizeBeforeForward {
+		return false
+	}
+	return failoverErr == nil || !failoverErr.RetryableAfterKeepalive
+}
+
+func openAIResponseStreamStarted(c *gin.Context, streamStarted bool) bool {
+	return streamStarted || (c != nil && c.Writer != nil && c.Writer.Written())
 }
 
 // openAIForwardErrorAlreadyCommunicated reports whether Forward returned an

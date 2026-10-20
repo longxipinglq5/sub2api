@@ -176,9 +176,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				return
 			} else {
 				if lastFailoverErr != nil {
-					h.handleFailoverExhausted(c, lastFailoverErr, streamStarted)
+					h.handleFailoverExhausted(c, lastFailoverErr, openAIResponseStreamStarted(c, streamStarted))
 				} else {
-					h.handleStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
+					h.handleStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", openAIResponseStreamStarted(c, streamStarted))
 				}
 				return
 			}
@@ -244,7 +244,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
-					if c.Writer.Size() != writerSizeBeforeForward {
+					if openAIFailoverOutputCommitted(c, writerSizeBeforeForward, failoverErr) {
 						h.gatewayService.RecordOpenAICommittedFailoverError(c.Request.Context(), account, failoverErr)
 						h.handleFailoverExhausted(c, failoverErr, true)
 						return
@@ -274,12 +274,12 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {
-						h.handleFailoverExhausted(c, failoverErr, streamStarted)
+						h.handleFailoverExhausted(c, failoverErr, openAIResponseStreamStarted(c, streamStarted))
 						return
 					}
 					switchCount++
 					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount) {
-						h.handleFailoverExhausted(c, failoverErr, streamStarted)
+						h.handleFailoverExhausted(c, failoverErr, openAIResponseStreamStarted(c, streamStarted))
 						return
 					}
 					reqLog.Warn("openai_chat_completions.upstream_failover_switching",

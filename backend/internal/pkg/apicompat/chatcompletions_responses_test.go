@@ -464,6 +464,35 @@ func TestChatCompletionsToResponses_LegacyFunctions(t *testing.T) {
 	assert.NotContains(t, tc, "function")
 }
 
+func TestChatCompletionsToResponses_ModernFunctionToolChoice(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model:      "gpt-5.6-sol",
+		Messages:   []ChatMessage{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
+		Tools:      []ChatTool{{Type: "function", Function: &ChatFunction{Name: "get_weather"}}},
+		ToolChoice: json.RawMessage(`{"type":"function","function":{"name":"get_weather"}}`),
+	}
+
+	resp, err := ChatCompletionsToResponses(req)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"type":"function","name":"get_weather"}`, string(resp.ToolChoice))
+}
+
+func TestChatCompletionsToResponses_StringToolChoicePreserved(t *testing.T) {
+	for _, mode := range []string{"auto", "none", "required"} {
+		t.Run(mode, func(t *testing.T) {
+			req := &ChatCompletionsRequest{
+				Model:      "gpt-5.6-sol",
+				Messages:   []ChatMessage{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
+				ToolChoice: json.RawMessage(`"` + mode + `"`),
+			}
+
+			resp, err := ChatCompletionsToResponses(req)
+			require.NoError(t, err)
+			assert.JSONEq(t, `"`+mode+`"`, string(resp.ToolChoice))
+		})
+	}
+}
+
 func TestChatCompletionsToResponses_ServiceTier(t *testing.T) {
 	req := &ChatCompletionsRequest{
 		Model:       "gpt-4o",
@@ -498,6 +527,31 @@ func TestChatCompletionsToResponses_TemperatureStrippedForReasoningModel(t *test
 	require.NoError(t, err)
 	assert.NotContains(t, string(b), `"temperature"`)
 	assert.NotContains(t, string(b), `"top_p"`)
+}
+
+func TestChatCompletionsToResponses_TemperatureStrippedForGPT6Astra(t *testing.T) {
+	temp := 0.7
+	for _, model := range []string{"gpt-6-astra", "openai/gpt-6-astra"} {
+		t.Run(model, func(t *testing.T) {
+			resp, err := ChatCompletionsToResponses(&ChatCompletionsRequest{
+				Model:       model,
+				Temperature: &temp,
+				TopP:        &temp,
+			})
+			require.NoError(t, err)
+			assert.Nil(t, resp.Temperature)
+			assert.Nil(t, resp.TopP)
+		})
+	}
+
+	resp, err := ChatCompletionsToResponses(&ChatCompletionsRequest{
+		Model:       "gpt-6-other",
+		Temperature: &temp,
+		TopP:        &temp,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.Temperature)
+	require.NotNil(t, resp.TopP)
 }
 
 func TestChatCompletionsToResponses_TemperaturePreservedForNonReasoningModel(t *testing.T) {

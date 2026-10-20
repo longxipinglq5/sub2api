@@ -409,6 +409,16 @@ func parseOpenAIWSResponseUsageFromCompletedEvent(message []byte, usage *OpenAIU
 	}
 }
 
+// normalizeGPT6AstraWSResponseCreate reuses the HTTP Responses sanitizer for
+// WS response.create frames. Keeping one sanitizer prevents the two transports
+// from drifting as Astra's accepted request fields evolve.
+func normalizeGPT6AstraWSResponseCreate(frame []byte) ([]byte, bool, error) {
+	if len(frame) == 0 || strings.TrimSpace(gjson.GetBytes(frame, "type").String()) != "response.create" {
+		return frame, false, nil
+	}
+	return normalizeGPT6AstraPassthroughBody(frame)
+}
+
 func parseOpenAIWSErrorEventFields(message []byte) (code string, errType string, errMessage string) {
 	if len(message) == 0 {
 		return "", "", ""
@@ -2693,6 +2703,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			normalized = next
 		}
+		if sanitized, changed, sanitizeErr := normalizeGPT6AstraWSResponseCreate(normalized); sanitizeErr != nil {
+			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", sanitizeErr)
+		} else if changed {
+			normalized = sanitized
+		}
 		if stripped, changed, stripErr := stripCodexSparkImageGenerationToolFromRawPayload(normalized, upstreamModel); stripErr != nil {
 			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", stripErr)
 		} else if changed {
@@ -4235,15 +4250,9 @@ func populateOpenAIUsageFromResponseJSON(body []byte, usage *OpenAIUsage) {
 	if usage == nil || len(body) == 0 {
 		return
 	}
-	values := gjson.GetManyBytes(
-		body,
-		"usage.input_tokens",
-		"usage.output_tokens",
-		"usage.input_tokens_details.cached_tokens",
-	)
-	usage.InputTokens = int(values[0].Int())
-	usage.OutputTokens = int(values[1].Int())
-	usage.CacheReadInputTokens = int(values[2].Int())
+	if parsedUsage, ok := extractOpenAIUsageFromJSONBytes(body); ok {
+		*usage = parsedUsage
+	}
 }
 
 func getOpenAIGroupIDFromContext(c *gin.Context) int64 {

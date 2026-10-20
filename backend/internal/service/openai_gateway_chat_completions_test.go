@@ -181,6 +181,205 @@ func TestForwardAsChatCompletions_APIKeyPropagatesPromptCacheKeyInResponsesBody(
 	require.Equal(t, generateSessionUUID(isolateOpenAISessionID(99, "cache-key-123")), upstream.lastReq.Header.Get("session_id"))
 }
 
+func TestForwardAsChatCompletions_APIKeyNormalizesGPT6Astra(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "responses shaped body",
+			body: `{"model":"gpt-6-astra","input":"hello","temperature":0.7,"top_p":0.9,"top_logprobs":3,"reasoning":{"effort":"minimal"},"include":["reasoning.encrypted_content","message.output_text.logprobs"],"stream":false}`,
+		},
+		{
+			name: "chat alias mapped to astra",
+			body: `{"model":"astra-alias","messages":[{"role":"user","content":"hello"}],"temperature":0.7,"top_p":0.9,"reasoning_effort":"none","stream":false}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			body := []byte(tt.body)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"stop after request capture"}}`)),
+			}}
+			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+			account := &Account{
+				ID:       22,
+				Name:     "openai-compatible",
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"api_key": "sk-compatible",
+					"model_mapping": map[string]any{
+						"gpt-6-astra": "gpt-6-astra",
+						"astra-alias": "gpt-6-astra",
+					},
+				},
+				Extra: map[string]any{"openai_responses_supported": true},
+			}
+
+			result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+			require.Error(t, err)
+			require.Nil(t, result)
+			require.Equal(t, "gpt-6-astra", gjson.GetBytes(upstream.lastBody, "model").String())
+			require.Equal(t, "low", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+			require.False(t, gjson.GetBytes(upstream.lastBody, "temperature").Exists())
+			require.False(t, gjson.GetBytes(upstream.lastBody, "top_p").Exists())
+			require.False(t, gjson.GetBytes(upstream.lastBody, "top_logprobs").Exists())
+			for _, item := range gjson.GetBytes(upstream.lastBody, "include").Array() {
+				require.NotEqual(t, "message.output_text.logprobs", item.String())
+			}
+		})
+	}
+}
+
+func TestForwardAsChatCompletions_GPT56FunctionToolsDefaultReasoningNone(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name       string
+		body       string
+		wantEffort string
+	}{
+		{
+			name:       "chat completions shape defaults to none",
+			body:       `{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"use the tool"}],"tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"get_weather"}},"stream":true}`,
+			wantEffort: "none",
+		},
+		{
+			name:       "explicit effort is preserved",
+			body:       `{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"use the tool"}],"reasoning_effort":"low","tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object"}}}],"stream":true}`,
+			wantEffort: "low",
+		},
+		{
+			name:       "responses shape defaults to none",
+			body:       `{"model":"gpt-5.6-sol","input":[{"role":"user","content":[{"type":"input_text","text":"use the tool"}]}],"tools":[{"type":"function","name":"get_weather","parameters":{"type":"object"}}],"stream":true}`,
+			wantEffort: "none",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			body := []byte(tt.body)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"stop before response parsing"}}`)),
+			}}
+
+			svc := &OpenAIGatewayService{
+				cfg:          &config.Config{},
+				httpUpstream: upstream,
+			}
+			account := &Account{
+				ID:          2,
+				Name:        "openai-compatible",
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Concurrency: 1,
+				Credentials: map[string]any{"api_key": "sk-compatible"},
+				Extra:       map[string]any{"openai_responses_supported": true},
+			}
+
+			result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+			require.Error(t, err)
+			require.Nil(t, result)
+			require.Equal(t, tt.wantEffort, gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+			if gjson.GetBytes(body, "tool_choice.function.name").String() != "" {
+				require.Equal(t, "get_weather", gjson.GetBytes(upstream.lastBody, "tool_choice.name").String())
+				require.False(t, gjson.GetBytes(upstream.lastBody, "tool_choice.function").Exists())
+			}
+		})
+	}
+}
+
+func TestForwardAsChatCompletions_CompatibleToolCallObjectDeltas(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"use the tool"}],"tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object"}}}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"type":"response.created","response":{"id":"resp_compat","model":"gpt-5.6-sol","status":"in_progress","output":[]}}`,
+			"",
+			`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"tool_call","call_id":"call_1","name":"get_weather"}}`,
+			"",
+			`data: {"type":"response.output_item.delta","output_index":0,"delta":{"id":"call_1","type":"tool_call","arguments":"{\"","call_id":"call_1"}}`,
+			"",
+			`data: {"type":"response.output_item.delta","output_index":0,"delta":{"id":"call_1","type":"tool_call","arguments":"city","call_id":"call_1"}}`,
+			"",
+			`data: {"type":"response.output_item.delta","output_index":0,"delta":{"id":"call_1","type":"tool_call","arguments":"\":\"Shenzhen\"}","call_id":"call_1"}}`,
+			"",
+			`data: {"type":"response.output_item.delta","output_index":0,"delta":{"id":"call_1","type":"tool_call","arguments":"{\"city\":\"Shenzhen\"}","call_id":"call_1"}}`,
+			"",
+			`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"tool_call","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"Shenzhen\"}"}}`,
+			"",
+			`data: {"type":"response.completed","response":{"id":"resp_compat","model":"gpt-5.6-sol","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}`,
+			"",
+			"data: [DONE]",
+			"",
+		}, "\n"))),
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:          2,
+		Name:        "compatible-responses",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-compatible"},
+		Extra:       map[string]any{"openai_responses_supported": true},
+	}
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	var toolName string
+	var arguments string
+	var finishReason string
+	for _, line := range strings.Split(rec.Body.String(), "\n") {
+		payload, ok := extractOpenAISSEDataLine(line)
+		if !ok || payload == "[DONE]" {
+			continue
+		}
+		if name := gjson.Get(payload, "choices.0.delta.tool_calls.0.function.name").String(); name != "" {
+			toolName = name
+		}
+		arguments += gjson.Get(payload, "choices.0.delta.tool_calls.0.function.arguments").String()
+		if reason := gjson.Get(payload, "choices.0.finish_reason").String(); reason != "" {
+			finishReason = reason
+		}
+	}
+	require.Equal(t, "get_weather", toolName)
+	require.Equal(t, `{"city":"Shenzhen"}`, arguments)
+	require.Equal(t, "tool_calls", finishReason)
+}
+
 func TestForwardAsChatCompletions_OAuthDoesNotInjectDefaultInstructions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

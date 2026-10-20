@@ -29,6 +29,10 @@ const (
 	// AccountSwitchCount 表示请求过程中发生的账号切换次数
 	AccountSwitchCount Key = "ctx_account_switch_count"
 
+	// DownstreamClientDisconnected 标识客户端在流式响应完成前关闭了下游连接。
+	// 上游可能仍被 drain 并成功计费，因此不能仅依赖 HTTP status 判断请求结果。
+	DownstreamClientDisconnected Key = "ctx_downstream_client_disconnected"
+
 	// IsClaudeCodeClient 标识当前请求是否来自 Claude Code 客户端
 	IsClaudeCodeClient Key = "ctx_is_claude_code_client"
 

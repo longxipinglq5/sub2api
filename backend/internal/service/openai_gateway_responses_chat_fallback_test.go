@@ -5,17 +5,60 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func TestResponsesFallbackToolSummaryIsBoundedAndSanitized(t *testing.T) {
+	tools := []apicompat.ResponsesTool{
+		{Type: "custom", Name: "exec"},
+		{Type: "function", Name: "unsafe name\nsecret"},
+		{Type: "web_search", Name: ""},
+	}
+
+	types, names := summarizeResponsesFallbackTools(tools)
+	require.Equal(t, []string{"custom", "function", "web_search"}, types)
+	require.Equal(t, []string{"exec", "unsafe?name?secret", ""}, names)
+
+	chatNames := summarizeChatFallbackTools([]apicompat.ChatTool{
+		{Type: "function", Function: &apicompat.ChatFunction{Name: "exec"}},
+		{Type: "function"},
+	})
+	require.Equal(t, []string{"exec", ""}, chatNames)
+}
+
+func TestResponsesFallbackToolChoiceSummary(t *testing.T) {
+	tests := []struct {
+		name     string
+		raw      json.RawMessage
+		wantType string
+		wantName string
+	}{
+		{name: "auto", raw: json.RawMessage(`"auto"`), wantType: "auto"},
+		{name: "custom", raw: json.RawMessage(`{"type":"custom","name":"exec"}`), wantType: "custom", wantName: "exec"},
+		{name: "function", raw: json.RawMessage(`{"type":"function","function":{"name":"lookup"}}`), wantType: "function", wantName: "lookup"},
+		{name: "invalid", raw: json.RawMessage(`{`), wantType: "invalid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			choiceType, choiceName := summarizeResponsesFallbackToolChoice(tt.raw)
+			require.Equal(t, tt.wantType, choiceType)
+			require.Equal(t, tt.wantName, choiceName)
+		})
+	}
+}
 
 func TestForwardResponses_ForceChatCompletionsRoutesNonStreamingToChatCompletions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -100,6 +143,47 @@ func TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions(t
 	require.Equal(t, 3, result.Usage.OutputTokens)
 	require.True(t, result.Stream)
 	require.NotNil(t, result.FirstTokenMs)
+}
+
+func TestForwardResponses_ChatFallbackClientDisconnectIsMarked(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4","input":"hello","stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Writer = &openAIChatFailingWriter{ResponseWriter: c.Writer, failAfter: 0}
+
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_disconnect","object":"chat.completion.chunk","model":"gpt-5.4","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}`,
+		"",
+		`data: {"id":"chatcmpl_disconnect","object":"chat.completion.chunk","model":"gpt-5.4","choices":[],"usage":{"prompt_tokens":6,"completion_tokens":4,"total_tokens":10}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": []string{"text/event-stream"},
+			"x-request-id": []string{"rid-chat-fallback-disconnect"},
+		},
+		Body: io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.ClientDisconnect)
+	require.Equal(t, 6, result.Usage.InputTokens)
+	require.Equal(t, 4, result.Usage.OutputTokens)
+	disconnected, _ := c.Request.Context().Value(ctxkey.DownstreamClientDisconnected).(bool)
+	require.True(t, disconnected)
 }
 
 func TestForwardResponses_ForceChatCompletionsPreservesCustomToolCall(t *testing.T) {

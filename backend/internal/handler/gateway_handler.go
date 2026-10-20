@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -999,13 +1000,23 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 
 	var groupID *int64
 	var platform string
+	forcedPlatform := ""
 
 	if apiKey != nil && apiKey.Group != nil {
 		groupID = &apiKey.Group.ID
 		platform = apiKey.Group.Platform
 	}
-	if forcedPlatform, ok := middleware2.GetForcePlatformFromContext(c); ok && strings.TrimSpace(forcedPlatform) != "" {
-		platform = forcedPlatform
+	if value, ok := middleware2.GetForcePlatformFromContext(c); ok && strings.TrimSpace(value) != "" {
+		platform = value
+		forcedPlatform = value
+	}
+
+	if forcedPlatform == "" {
+		groups := boundAPIKeyGroups(apiKey)
+		if len(groups) > 1 {
+			writeModelsList(c, h.availableModelsForGroups(c.Request.Context(), groups))
+			return
+		}
 	}
 
 	// Get available models from account configurations for the selected group platform.
@@ -1042,6 +1053,77 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		"object": "list",
 		"data":   claude.DefaultModels,
 	})
+}
+
+func boundAPIKeyGroups(apiKey *service.APIKey) []service.Group {
+	if apiKey == nil {
+		return nil
+	}
+
+	groupsByID := make(map[int64]service.Group, len(apiKey.Groups)+1)
+	if apiKey.Group != nil {
+		groupsByID[apiKey.Group.ID] = *apiKey.Group
+	}
+	for _, group := range apiKey.Groups {
+		groupsByID[group.ID] = group
+	}
+
+	orderedIDs := make([]int64, 0, len(apiKey.GroupIDs)+1)
+	seenIDs := make(map[int64]struct{}, len(apiKey.GroupIDs)+1)
+	addID := func(groupID int64) {
+		if groupID <= 0 {
+			return
+		}
+		if _, ok := seenIDs[groupID]; ok {
+			return
+		}
+		seenIDs[groupID] = struct{}{}
+		orderedIDs = append(orderedIDs, groupID)
+	}
+	if apiKey.GroupID != nil {
+		addID(*apiKey.GroupID)
+	}
+	for _, groupID := range apiKey.GroupIDs {
+		addID(groupID)
+	}
+	for _, group := range apiKey.Groups {
+		addID(group.ID)
+	}
+
+	groups := make([]service.Group, 0, len(orderedIDs))
+	for _, groupID := range orderedIDs {
+		if group, ok := groupsByID[groupID]; ok {
+			groups = append(groups, group)
+		}
+	}
+	return groups
+}
+
+func (h *GatewayHandler) availableModelsForGroups(ctx context.Context, groups []service.Group) []string {
+	modelSet := make(map[string]struct{})
+	for i := range groups {
+		group := &groups[i]
+		groupID := group.ID
+		models := h.gatewayService.GetAvailableModels(ctx, &groupID, group.Platform)
+		if group.CustomModelsListEnabled() {
+			models = filterModelsByCustomList(models, defaultModelIDsForPlatform(group.Platform), group.ModelsListConfig.Models)
+		} else if len(models) == 0 {
+			models = defaultModelIDsForPlatform(group.Platform)
+		}
+		for _, model := range models {
+			model = strings.TrimSpace(model)
+			if model != "" {
+				modelSet[model] = struct{}{}
+			}
+		}
+	}
+
+	models := make([]string, 0, len(modelSet))
+	for model := range modelSet {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	return models
 }
 
 func writeModelsList(c *gin.Context, modelIDs []string) {

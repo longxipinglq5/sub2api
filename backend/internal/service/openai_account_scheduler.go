@@ -1396,6 +1396,9 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 	if s == nil || account == nil {
 		return false
 	}
+	if requiredTransport == OpenAIUpstreamTransportRealtimeWebsocket {
+		return account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityRealtime)
+	}
 	return s.getOpenAIWSProtocolResolver().Resolve(account).Transport == requiredTransport
 }
 

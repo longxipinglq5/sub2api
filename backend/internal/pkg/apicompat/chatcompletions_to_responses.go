@@ -74,10 +74,14 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 		out.Tools = convertChatToolsToResponses(req.Tools, req.Functions)
 	}
 
-	// tool_choice: already compatible format — pass through directly.
-	// Legacy function_call needs mapping.
+	// Chat Completions nests a named function under "function", while the
+	// Responses API expects the function name at the top level.
 	if len(req.ToolChoice) > 0 {
-		out.ToolChoice = req.ToolChoice
+		tc, err := convertChatToolChoiceToResponses(req.ToolChoice)
+		if err != nil {
+			return nil, fmt.Errorf("convert tool_choice: %w", err)
+		}
+		out.ToolChoice = tc
 	} else if len(req.FunctionCall) > 0 {
 		tc, err := convertChatFunctionCallToToolChoice(req.FunctionCall)
 		if err != nil {
@@ -445,6 +449,39 @@ func defaultStrictFalse(src *bool) *bool {
 		return &value
 	}
 	return src
+}
+
+// convertChatToolChoiceToResponses maps modern Chat Completions tool_choice
+// values to Responses API shape. String modes and already-compatible objects
+// are preserved.
+func convertChatToolChoiceToResponses(raw json.RawMessage) (json.RawMessage, error) {
+	var mode string
+	if err := json.Unmarshal(raw, &mode); err == nil {
+		return json.Marshal(mode)
+	}
+
+	var obj struct {
+		Type     string `json:"type"`
+		Name     string `json:"name"`
+		Function *struct {
+			Name string `json:"name"`
+		} `json:"function"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(strings.TrimSpace(obj.Type), "function") && obj.Function != nil {
+		name := strings.TrimSpace(obj.Function.Name)
+		if name == "" {
+			return nil, fmt.Errorf("function tool_choice name is required")
+		}
+		return json.Marshal(map[string]any{
+			"type": "function",
+			"name": name,
+		})
+	}
+
+	return raw, nil
 }
 
 // convertChatFunctionCallToToolChoice maps the legacy function_call field to a

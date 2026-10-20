@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // TestIsOpenAIWSTokenEvent_TerminalEventsExcluded 覆盖 isOpenAIWSTokenEvent 的回归用例。
@@ -53,6 +54,162 @@ func TestIsOpenAIWSTokenEvent_TerminalEventsExcluded(t *testing.T) {
 			require.Equal(t, tc.want, got, "isOpenAIWSTokenEvent(%q)", tc.eventType)
 		})
 	}
+}
+
+func TestParseOpenAIWSUsageCacheWritePrecedenceAndProvenance(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		message          string
+		wantInput        int
+		wantRead         int
+		wantWrite        int
+		wantWriteInInput bool
+	}{
+		{
+			name:             "input details take precedence",
+			message:          `{"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":7,"cache_creation_input_tokens":41,"input_tokens_details":{"cached_tokens":20,"cache_write_tokens":30},"prompt_tokens_details":{"cached_tokens":21,"cache_write_tokens":31}}}}`,
+			wantInput:        100,
+			wantRead:         20,
+			wantWrite:        30,
+			wantWriteInInput: true,
+		},
+		{
+			name:             "prompt details alias",
+			message:          `{"type":"response.done","response":{"usage":{"prompt_tokens":80,"completion_tokens":5,"cache_creation_input_tokens":23,"prompt_tokens_details":{"cached_tokens":10,"cache_write_tokens":20}}}}`,
+			wantInput:        80,
+			wantRead:         10,
+			wantWrite:        20,
+			wantWriteInInput: true,
+		},
+		{
+			name:             "legacy top level fallback has no included provenance",
+			message:          `{"usage":{"input_tokens":60,"output_tokens":4,"cache_creation_input_tokens":15,"input_tokens_details":{"cached_tokens":9}}}`,
+			wantInput:        60,
+			wantRead:         9,
+			wantWrite:        15,
+			wantWriteInInput: false,
+		},
+		{
+			name:             "present nested zero overrides legacy top level",
+			message:          `{"response":{"usage":{"input_tokens":12,"cache_creation_input_tokens":8,"input_tokens_details":{"cache_write_tokens":0}}}}`,
+			wantInput:        12,
+			wantWrite:        0,
+			wantWriteInInput: true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			usage := OpenAIUsage{}
+			parseOpenAIWSResponseUsageFromCompletedEvent([]byte(tt.message), &usage)
+			require.Equal(t, tt.wantInput, usage.InputTokens)
+			require.Equal(t, tt.wantRead, usage.CacheReadInputTokens)
+			require.Equal(t, tt.wantWrite, usage.CacheCreationInputTokens)
+			require.Equal(t, tt.wantWriteInInput, usage.CacheCreationInputTokensIncludedInInput)
+		})
+	}
+}
+
+func TestPopulateOpenAIUsageFromResponseJSONCacheWritePrecedenceAndProvenance(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		body             string
+		wantInput        int
+		wantOutput       int
+		wantRead         int
+		wantWrite        int
+		wantWriteInInput bool
+	}{
+		{
+			name:             "input details take precedence",
+			body:             `{"usage":{"input_tokens":100,"output_tokens":7,"cache_creation_input_tokens":41,"input_tokens_details":{"cached_tokens":20,"cache_write_tokens":30},"prompt_tokens_details":{"cached_tokens":21,"cache_write_tokens":31}}}`,
+			wantInput:        100,
+			wantOutput:       7,
+			wantRead:         20,
+			wantWrite:        30,
+			wantWriteInInput: true,
+		},
+		{
+			name:             "prompt details alias",
+			body:             `{"usage":{"prompt_tokens":80,"completion_tokens":5,"cache_creation_input_tokens":23,"prompt_tokens_details":{"cached_tokens":10,"cache_write_tokens":20}}}`,
+			wantInput:        80,
+			wantOutput:       5,
+			wantRead:         10,
+			wantWrite:        20,
+			wantWriteInInput: true,
+		},
+		{
+			name:             "legacy top level fallback has no included provenance",
+			body:             `{"usage":{"input_tokens":60,"output_tokens":4,"cache_creation_input_tokens":15,"input_tokens_details":{"cached_tokens":9}}}`,
+			wantInput:        60,
+			wantOutput:       4,
+			wantRead:         9,
+			wantWrite:        15,
+			wantWriteInInput: false,
+		},
+		{
+			name:             "present nested zero overrides legacy top level",
+			body:             `{"usage":{"input_tokens":12,"cache_creation_input_tokens":8,"input_tokens_details":{"cache_write_tokens":0}}}`,
+			wantInput:        12,
+			wantWrite:        0,
+			wantWriteInInput: true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			usage := OpenAIUsage{InputTokens: 999, OutputTokens: 999}
+			populateOpenAIUsageFromResponseJSON([]byte(tt.body), &usage)
+			require.Equal(t, tt.wantInput, usage.InputTokens)
+			require.Equal(t, tt.wantOutput, usage.OutputTokens)
+			require.Equal(t, tt.wantRead, usage.CacheReadInputTokens)
+			require.Equal(t, tt.wantWrite, usage.CacheCreationInputTokens)
+			require.Equal(t, tt.wantWriteInInput, usage.CacheCreationInputTokensIncludedInInput)
+		})
+	}
+}
+
+func TestNormalizeGPT6AstraWSResponseCreate(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{"type":"response.create","model":"gpt-6-astra","temperature":0.7,"top_p":0.9,"top_logprobs":3,"reasoning":{"effort":"minimal"},"include":["reasoning.encrypted_content","message.output_text.logprobs"],"input":"hi"}`)
+	got, changed, err := normalizeGPT6AstraWSResponseCreate(raw)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(got, "temperature").Exists())
+	require.False(t, gjson.GetBytes(got, "top_p").Exists())
+	require.False(t, gjson.GetBytes(got, "top_logprobs").Exists())
+	require.Equal(t, "low", gjson.GetBytes(got, "reasoning.effort").String())
+	require.Equal(t, []string{"reasoning.encrypted_content"}, openAIWSJSONStrings(gjson.GetBytes(got, "include")))
+
+	noneEffort := []byte(`{"type":"response.create","model":"gpt-6-astra","reasoning":{"effort":"none"}}`)
+	got, changed, err = normalizeGPT6AstraWSResponseCreate(noneEffort)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "low", gjson.GetBytes(got, "reasoning.effort").String())
+
+	nonCreate := []byte(`{"type":"session.update","model":"gpt-6-astra","temperature":0.7,"reasoning":{"effort":"none"}}`)
+	got, changed, err = normalizeGPT6AstraWSResponseCreate(nonCreate)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(nonCreate), string(got))
+}
+
+func openAIWSJSONStrings(value gjson.Result) []string {
+	items := value.Array()
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		result = append(result, item.String())
+	}
+	return result
 }
 
 // TestOpenAIWSCyberPolicyMark_ResponseFailed 验证 WS 路径 response.failed cyber_policy 标记逻辑。

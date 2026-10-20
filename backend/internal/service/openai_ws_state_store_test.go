@@ -158,6 +158,10 @@ func TestEnsureBindingCapacity_DoesNotEvictWhenUpdatingExistingKey(t *testing.T)
 
 type openAIWSStateStoreTimeoutProbeCache struct {
 	setHasDeadline    bool
+	setContextErr     error
+	setContextValue   any
+	getContextErr     error
+	deleteContextErr  error
 	getHasDeadline    bool
 	deleteHasDeadline bool
 	setDeadlineDelta  time.Duration
@@ -165,7 +169,12 @@ type openAIWSStateStoreTimeoutProbeCache struct {
 	delDeadlineDelta  time.Duration
 }
 
+type openAIWSStateStoreContextKey string
+
+const openAIWSStateStoreTraceKey openAIWSStateStoreContextKey = "trace"
+
 func (c *openAIWSStateStoreTimeoutProbeCache) GetSessionAccountID(ctx context.Context, _ int64, _ string) (int64, error) {
+	c.getContextErr = ctx.Err()
 	if deadline, ok := ctx.Deadline(); ok {
 		c.getHasDeadline = true
 		c.getDeadlineDelta = time.Until(deadline)
@@ -174,6 +183,8 @@ func (c *openAIWSStateStoreTimeoutProbeCache) GetSessionAccountID(ctx context.Co
 }
 
 func (c *openAIWSStateStoreTimeoutProbeCache) SetSessionAccountID(ctx context.Context, _ int64, _ string, _ int64, _ time.Duration) error {
+	c.setContextErr = ctx.Err()
+	c.setContextValue = ctx.Value(openAIWSStateStoreTraceKey)
 	if deadline, ok := ctx.Deadline(); ok {
 		c.setHasDeadline = true
 		c.setDeadlineDelta = time.Until(deadline)
@@ -181,16 +192,57 @@ func (c *openAIWSStateStoreTimeoutProbeCache) SetSessionAccountID(ctx context.Co
 	return errors.New("set failed")
 }
 
+func TestOpenAIWSStateStore_BindResponseAccountDetachesCanceledContext(t *testing.T) {
+	probe := &openAIWSStateStoreTimeoutProbeCache{}
+	store := NewOpenAIWSStateStore(probe)
+	ctx := context.WithValue(context.Background(), openAIWSStateStoreTraceKey, "trace-123")
+	ctx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	err := store.BindResponseAccount(ctx, 5, "resp_completed", 11, time.Minute)
+	require.EqualError(t, err, "set failed")
+	require.NoError(t, probe.setContextErr, "Redis bind must outlive the completed request context")
+	require.Equal(t, "trace-123", probe.setContextValue, "detached Redis bind should preserve trace values")
+	require.True(t, probe.setHasDeadline)
+	require.Greater(t, probe.setDeadlineDelta, 2*time.Second)
+	require.LessOrEqual(t, probe.setDeadlineDelta, 3*time.Second)
+}
+
+func TestOpenAIWSStateStore_BindResponseAccountNilContextIsBounded(t *testing.T) {
+	probe := &openAIWSStateStoreTimeoutProbeCache{}
+	store := NewOpenAIWSStateStore(probe)
+
+	err := store.BindResponseAccount(nil, 5, "resp_nil_ctx", 11, time.Minute)
+	require.EqualError(t, err, "set failed")
+	require.NoError(t, probe.setContextErr)
+	require.True(t, probe.setHasDeadline)
+}
+
 func (c *openAIWSStateStoreTimeoutProbeCache) RefreshSessionTTL(context.Context, int64, string, time.Duration) error {
 	return nil
 }
 
 func (c *openAIWSStateStoreTimeoutProbeCache) DeleteSessionAccountID(ctx context.Context, _ int64, _ string) error {
+	c.deleteContextErr = ctx.Err()
 	if deadline, ok := ctx.Deadline(); ok {
 		c.deleteHasDeadline = true
 		c.delDeadlineDelta = time.Until(deadline)
 	}
 	return nil
+}
+
+func TestOpenAIWSStateStore_GetAndDeleteRemainCallerCancelable(t *testing.T) {
+	probe := &openAIWSStateStoreTimeoutProbeCache{}
+	store := NewOpenAIWSStateStore(probe)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := store.GetResponseAccount(ctx, 5, "resp_canceled_read")
+	require.NoError(t, err)
+	require.ErrorIs(t, probe.getContextErr, context.Canceled)
+
+	require.NoError(t, store.DeleteResponseAccount(ctx, 5, "resp_canceled_delete"))
+	require.ErrorIs(t, probe.deleteContextErr, context.Canceled)
 }
 
 func TestOpenAIWSStateStore_RedisOpsUseShortTimeout(t *testing.T) {

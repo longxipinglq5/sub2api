@@ -19,6 +19,7 @@ const (
 	EndpointChatCompletions   = "/v1/chat/completions"
 	EndpointEmbeddings        = "/v1/embeddings"
 	EndpointResponses         = "/v1/responses"
+	EndpointRealtime          = "/v1/realtime"
 	EndpointImagesGenerations = "/v1/images/generations"
 	EndpointImagesEdits       = "/v1/images/edits"
 	EndpointGeminiModels      = "/v1beta/models"
@@ -55,6 +56,8 @@ func NormalizeInboundEndpoint(path string) string {
 		return EndpointImagesEdits
 	case strings.Contains(path, EndpointResponses):
 		return EndpointResponses
+	case strings.Contains(path, EndpointRealtime):
+		return EndpointRealtime
 	case strings.Contains(path, EndpointGeminiModels):
 		return EndpointGeminiModels
 	default:
@@ -66,8 +69,8 @@ func NormalizeInboundEndpoint(path string) string {
 // account platform and the normalized inbound endpoint.
 //
 // Platform-specific rules:
-//   - OpenAI always forwards to /v1/responses (with optional subpath
-//     such as /v1/responses/compact preserved from the raw URL).
+//   - OpenAI forwards Realtime to /v1/realtime and other requests to
+//     /v1/responses (with optional subpaths preserved).
 //   - Anthropic  → /v1/messages
 //   - Gemini     → /v1beta/models
 //   - Antigravity → /v1/messages (Claude) or gemini (Gemini)
@@ -78,6 +81,9 @@ func DeriveUpstreamEndpoint(inbound, rawRequestPath, platform string) string {
 
 	switch platform {
 	case service.PlatformOpenAI, service.PlatformGrok:
+		if inbound == EndpointRealtime {
+			return EndpointRealtime
+		}
 		if inbound == EndpointEmbeddings || inbound == EndpointImagesGenerations || inbound == EndpointImagesEdits {
 			return inbound
 		}

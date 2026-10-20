@@ -191,6 +191,20 @@ func openAIWSPassthroughRequestModelFromSessionFrame(payload []byte) string {
 	return strings.TrimSpace(gjson.GetBytes(payload, "session.model").String())
 }
 
+func openAIWSV2UsageToOpenAIUsage(usage openaiwsv2.Usage) OpenAIUsage {
+	return OpenAIUsage{
+		InputTokens:                             usage.InputTokens,
+		AudioInputTokens:                        usage.AudioInputTokens,
+		OutputTokens:                            usage.OutputTokens,
+		AudioOutputTokens:                       usage.AudioOutputTokens,
+		CacheCreationInputTokens:                usage.CacheCreationInputTokens,
+		CacheCreationInputTokensIncludedInInput: usage.CacheCreationInputTokensIncludedInInput,
+		CacheReadInputTokens:                    usage.CacheReadInputTokens,
+		CacheReadAudioInputTokens:               usage.CacheReadAudioInputTokens,
+		ImageOutputTokens:                       usage.ImageOutputTokens,
+	}
+}
+
 const openaiWSV2PassthroughModeFields = "ws_mode=passthrough ws_router=v2"
 
 var _ openaiwsv2.FrameConn = (*openAIWSClientFrameConn)(nil)
@@ -297,6 +311,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, blocked.Message, blocked)
 	}
 	firstClientMessage = updatedFirst
+	sanitizedFirst, sanitizeErr := openaiwsv2.SanitizeResponseCreate(firstClientMessage, capturedSessionModel)
+	if sanitizeErr != nil {
+		return fmt.Errorf("sanitize first openai ws response.create: %w", sanitizeErr)
+	}
+	firstClientMessage = sanitizedFirst
 
 	// 在 policy filter 之后再提取 service_tier / reasoning_effort 用于
 	// usage 上报：filter
@@ -436,6 +455,12 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				model = capturedSessionModel
 			}
 			out, blocked, policyErr := s.applyOpenAIFastPolicyToWSResponseCreate(ctx, account, model, payload)
+			if policyErr == nil && blocked == nil {
+				out, policyErr = openaiwsv2.SanitizeResponseCreate(out, model)
+				if policyErr != nil {
+					policyErr = fmt.Errorf("sanitize openai ws response.create: %w", policyErr)
+				}
+			}
 			// 多轮 passthrough usage：仅在成功（non-block / non-err）
 			// 的 response.create 帧上更新 usageMeta，使用
 			// filter 处理后的 payload，与首帧 policy-after-extract 语义
@@ -520,14 +545,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			OnTurnComplete: func(turn openaiwsv2.RelayTurnResult) {
 				turnNo := int(completedTurns.Add(1))
 				turnResult := &OpenAIForwardResult{
-					RequestID: turn.RequestID,
-					Usage: OpenAIUsage{
-						InputTokens:              turn.Usage.InputTokens,
-						OutputTokens:             turn.Usage.OutputTokens,
-						CacheCreationInputTokens: turn.Usage.CacheCreationInputTokens,
-						CacheReadInputTokens:     turn.Usage.CacheReadInputTokens,
-						ImageOutputTokens:        turn.Usage.ImageOutputTokens,
-					},
+					RequestID:       turn.RequestID,
+					Usage:           openAIWSV2UsageToOpenAIUsage(turn.Usage),
 					Model:           turn.RequestModel,
 					ServiceTier:     usageMeta.serviceTier.Load(),
 					ReasoningEffort: usageMeta.reasoningEffort.Load(),
@@ -595,14 +614,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	})
 
 	result := &OpenAIForwardResult{
-		RequestID: relayResult.RequestID,
-		Usage: OpenAIUsage{
-			InputTokens:              relayResult.Usage.InputTokens,
-			OutputTokens:             relayResult.Usage.OutputTokens,
-			CacheCreationInputTokens: relayResult.Usage.CacheCreationInputTokens,
-			CacheReadInputTokens:     relayResult.Usage.CacheReadInputTokens,
-			ImageOutputTokens:        relayResult.Usage.ImageOutputTokens,
-		},
+		RequestID:       relayResult.RequestID,
+		Usage:           openAIWSV2UsageToOpenAIUsage(relayResult.Usage),
 		Model:           relayResult.RequestModel,
 		ServiceTier:     usageMeta.serviceTier.Load(),
 		ReasoningEffort: usageMeta.reasoningEffort.Load(),

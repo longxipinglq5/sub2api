@@ -615,6 +615,7 @@ func TestAccountSupportsOpenAIEndpointCapability(t *testing.T) {
 
 		require.True(t, account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityChatCompletions))
 		require.True(t, account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityEmbeddings))
+		require.False(t, account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityRealtime))
 	})
 
 	t.Run("OpenAI OAuth 默认仅兼容 chat", func(t *testing.T) {
@@ -638,6 +639,13 @@ func TestAccountSupportsOpenAIEndpointCapability(t *testing.T) {
 
 		require.True(t, account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityChatCompletions))
 		require.True(t, account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityEmbeddings))
+	})
+
+	t.Run("显式 realtime capability 才允许 realtime", func(t *testing.T) {
+		account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{
+			"openai_capabilities": []any{"chat_completions", "realtime"},
+		}}
+		require.True(t, account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityRealtime))
 	})
 
 	t.Run("显式列表只声明 chat 时不支持 embeddings", func(t *testing.T) {

@@ -4,9 +4,34 @@ vi.mock('@/api/admin/accounts', () => ({
   getAntigravityDefaultModelMapping: vi.fn()
 }))
 
-import { buildModelMappingObject, getModelsByPlatform, splitModelMappingObject } from '../useModelWhitelist'
+import { buildModelMappingObject, getModelsByPlatform, getPresetMappingsByPlatform, splitModelMappingObject } from '../useModelWhitelist'
 
 describe('useModelWhitelist', () => {
+  it('openai model list and whitelist mapping include GPT-6 Astra', () => {
+    const models = getModelsByPlatform('openai')
+
+    expect(models).toContain('gpt-6-astra')
+    expect(buildModelMappingObject('whitelist', ['gpt-6-astra'], [])).toEqual({
+      'gpt-6-astra': 'gpt-6-astra'
+    })
+  })
+
+  it('DeepSeek account model selector exposes V4.1 Flash and its identity mapping', () => {
+    const models = getModelsByPlatform('deepseek')
+    const presets = getPresetMappingsByPlatform('deepseek')
+
+    expect(models).toContain('deepseek-flash')
+    expect(models).toContain('deepseek-v4-flash')
+    expect(buildModelMappingObject('whitelist', ['deepseek-flash'], [])).toEqual({
+      'deepseek-flash': 'deepseek-flash'
+    })
+    expect(presets).toContainEqual(expect.objectContaining({
+      label: 'DeepSeek V4.1 Flash',
+      from: 'deepseek-flash',
+      to: 'deepseek-flash'
+    }))
+  })
+
   it('openai 模型列表包含 GPT-5.4 官方快照', () => {
     const models = getModelsByPlatform('openai')
 
